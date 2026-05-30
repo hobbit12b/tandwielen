@@ -13,7 +13,7 @@
   const TOOTH_DEPTH = 32
   const TOOTH_ADDENDUM = TOOTH_DEPTH * 0.40
   const TOOTH_DEDENDUM = TOOTH_DEPTH * 0.60
-  const MESH_TOOTH_OVERLAP = 1.5
+  const MESH_TOOTH_OVERLAP = -3
   const SNAP_TOLERANCE = 50
   const START_SPEED = 0.34 // rustig ontdekspeelgoed, geen arcade-snelheid
   const TWO_PI = Math.PI * 2
@@ -116,10 +116,24 @@
     mode = next
     discoverBtn.classList.toggle('active', mode === 'discover')
     chooseBtn.classList.toggle('active', mode === 'choose')
-    choosePanel.hidden = mode !== 'choose'
+    syncChoosePanelVisibility()
     drag = null
     if(mode === 'discover') resetDiscover()
     else resetChoose()
+  }
+
+  function syncChoosePanelVisibility(){
+    if(mode === 'discover'){
+      choosePanel.hidden = true
+      choosePanel.style.display = 'none'
+      choosePanel.classList.remove('is-visible')
+      return
+    }
+    if(mode === 'choose'){
+      choosePanel.hidden = false
+      choosePanel.style.display = ''
+      choosePanel.classList.add('is-visible')
+    }
   }
 
   function getGear(id){ return gears.find(g => g.id === id) }
@@ -146,9 +160,31 @@
   }
 
   function disconnectGear(gear){
-    links = links.filter(l => l.a !== gear.id && l.b !== gear.id)
-    if(!gear.driver) gear.speed = 0
+    const driverIds = new Set(gears.filter(g => g.driver).map(g => g.id))
+    const cutIds = collectDependentGearIds(gear.id, driverIds)
+    links = links.filter(l => !cutIds.has(l.a) && !cutIds.has(l.b))
+    cutIds.forEach(id => {
+      const cutGear = getGear(id)
+      if(cutGear && !cutGear.driver) cutGear.speed = 0
+    })
     propagateRotation()
+  }
+
+  function collectDependentGearIds(rootId, driverIds){
+    const blocked = new Set(driverIds)
+    blocked.delete(rootId)
+    const dependent = new Set([rootId])
+    const queue = [rootId]
+    while(queue.length){
+      const id = queue.shift()
+      links.forEach(link => {
+        const next = link.a === id ? link.b : link.b === id ? link.a : null
+        if(!next || dependent.has(next) || blocked.has(next)) return
+        dependent.add(next)
+        queue.push(next)
+      })
+    }
+    return dependent
   }
 
   function toggleStartDirection(){
@@ -160,9 +196,8 @@
   }
 
   function meshDistance(a, b){
-    // De hartafstand blijft vrijwel gelijk aan de som van beide pitch-radii.
-    // Alleen een heel kleine overlap blijft over, net genoeg om de tandtop in de
-    // ruime dedendum-opening te laten vallen zonder zichtbaar door elkaar te lopen.
+    // De hartafstand krijgt een paar pixels extra lucht zodat afgeronde tandtoppen
+    // niet zichtbaar door elkaar lopen, maar nog wel in de ruime opening lijken te vallen.
     return a.pitchRadius + b.pitchRadius - MESH_TOOTH_OVERLAP
   }
 
@@ -242,7 +277,7 @@
     hasDraggedDiscover = true
     canvas.setPointerCapture(evt.pointerId)
     disconnectGear(gear)
-    drag = { id: gear.id, dx: p.x - gear.x, dy: p.y - gear.y, pointerId: evt.pointerId }
+    drag = { id: gear.id, dx: p.x - gear.x, dy: p.y - gear.y, pointerId: evt.pointerId, startX: p.x, startY: p.y }
     gears = gears.filter(g => g.id !== gear.id).concat(gear)
   }
 
@@ -250,13 +285,13 @@
     const p = pointerToWorld(evt)
     if(!drag){
       const gear = gearAt(p)
-      canvas.style.cursor = mode === 'discover' && gear?.id === 'start' ? 'pointer' : 'default'
+      canvas.style.cursor = mode === 'discover' && gear && !gear.fixed ? 'grab' : mode === 'discover' && gear?.id === 'start' ? 'pointer' : 'default'
       return
     }
     const gear = getGear(drag.id)
     gear.x = clamp(p.x - drag.dx, gear.outerRadius + 18, WORLD.w - gear.outerRadius - 18)
     gear.y = clamp(p.y - drag.dy, 126 + gear.outerRadius, WORLD.h - gear.outerRadius - 18)
-    if(trySnap(gear)) drag = null
+    if(Math.hypot(p.x - drag.startX, p.y - drag.startY) > 90 && trySnap(gear)) drag = null
   }
 
   function onPointerUp(evt){
@@ -371,11 +406,12 @@
   function drawStartDirectionArrow(g){
     const clockwise = g.speed > 0
     const pulse = mode === 'discover' ? .5 + Math.sin(performance.now() / 360) * .5 : 0
-    const arrowRadius = Math.max(g.boreRadius + 23, g.pitchRadius * .58)
+    const arrowRadius = Math.max(g.boreRadius + 25, g.pitchRadius * .60)
     const startAngle = g.angle - Math.PI * .72
-    const endAngle = g.angle + Math.PI * .86
+    const endAngle = g.angle + Math.PI * .82
     const from = clockwise ? startAngle : endAngle
     const to = clockwise ? endAngle : startAngle
+    const anticlockwise = !clockwise
 
     if(mode === 'discover'){
       ctx.save()
@@ -391,25 +427,46 @@
     ctx.lineJoin = 'round'
     ctx.shadowColor = 'rgba(47,92,45,.30)'
     ctx.shadowBlur = 5
-    ctx.lineWidth = 14
+    ctx.lineWidth = 15
     ctx.strokeStyle = 'rgba(47,92,45,.22)'
-    ctx.beginPath(); ctx.arc(0, 0, arrowRadius, from, to, !clockwise); ctx.stroke()
+    ctx.beginPath(); ctx.arc(0, 0, arrowRadius, from, to, anticlockwise); ctx.stroke()
     ctx.shadowColor = 'transparent'
     ctx.lineWidth = 10
-    ctx.strokeStyle = 'rgba(255,255,255,.96)'
-    ctx.beginPath(); ctx.arc(0, 0, arrowRadius, from, to, !clockwise); ctx.stroke()
+    ctx.strokeStyle = 'rgba(255,255,255,.97)'
+    ctx.beginPath(); ctx.arc(0, 0, arrowRadius, from, to, anticlockwise); ctx.stroke()
 
-    const headAngle = to
     const dir = clockwise ? 1 : -1
-    const tip = pointOnGear(headAngle, arrowRadius)
-    const wingBack = pointOnGear(headAngle - dir * .28, arrowRadius - 1)
-    const wingOuter = pointOnGear(headAngle - dir * .08, arrowRadius + 24)
-    const wingInner = pointOnGear(headAngle - dir * .08, arrowRadius - 24)
+    const tip = pointOnGear(to, arrowRadius)
+    const tangent = to + dir * Math.PI / 2
+    const back = {
+      x: tip.x - Math.cos(tangent) * 25,
+      y: tip.y - Math.sin(tangent) * 25
+    }
+    const normal = to
+    const outer = {
+      x: back.x + Math.cos(normal) * 14,
+      y: back.y + Math.sin(normal) * 14
+    }
+    const inner = {
+      x: back.x - Math.cos(normal) * 14,
+      y: back.y - Math.sin(normal) * 14
+    }
     ctx.fillStyle = 'rgba(47,92,45,.22)'
-    ctx.beginPath(); ctx.moveTo(tip.x + 2, tip.y + 3); ctx.lineTo(wingOuter.x + 2, wingOuter.y + 3); ctx.lineTo(wingBack.x + 2, wingBack.y + 3); ctx.lineTo(wingInner.x + 2, wingInner.y + 3); ctx.closePath(); ctx.fill()
+    drawRoundedArrowHead(tip.x + 2, tip.y + 3, outer.x + 2, outer.y + 3, inner.x + 2, inner.y + 3)
+    ctx.fill()
     ctx.fillStyle = 'rgba(255,255,255,.98)'
-    ctx.beginPath(); ctx.moveTo(tip.x, tip.y); ctx.lineTo(wingOuter.x, wingOuter.y); ctx.lineTo(wingBack.x, wingBack.y); ctx.lineTo(wingInner.x, wingInner.y); ctx.closePath(); ctx.fill()
+    drawRoundedArrowHead(tip.x, tip.y, outer.x, outer.y, inner.x, inner.y)
+    ctx.fill()
     ctx.restore()
+  }
+
+  function drawRoundedArrowHead(tipX, tipY, outerX, outerY, innerX, innerY){
+    ctx.beginPath()
+    ctx.moveTo(tipX, tipY)
+    ctx.quadraticCurveTo((tipX + outerX) / 2, (tipY + outerY) / 2, outerX, outerY)
+    ctx.quadraticCurveTo((outerX + innerX) / 2 - (tipX - (outerX + innerX) / 2) * .18, (outerY + innerY) / 2 - (tipY - (outerY + innerY) / 2) * .18, innerX, innerY)
+    ctx.quadraticCurveTo((tipX + innerX) / 2, (tipY + innerY) / 2, tipX, tipY)
+    ctx.closePath()
   }
 
   function shade(hex, percent){
@@ -438,8 +495,8 @@
   }
 
   function drawRobot(){
-    if(assets.robot.ready){ ctx.drawImage(assets.robot, 1082, 408, 148, 176); return }
-    ctx.save(); ctx.translate(1154, 432)
+    if(assets.robot.ready){ ctx.drawImage(assets.robot, 25, 500, 145, 170); return }
+    ctx.save(); ctx.translate(96, 524)
     ctx.fillStyle = '#dde8ee'; roundRect(-55, 28, 130, 104, 24); ctx.fill()
     ctx.fillStyle = '#f3fbff'; roundRect(-35, 46, 88, 42, 16); ctx.fill()
     ctx.fillStyle = '#364756'; ctx.beginPath(); ctx.arc(-12, 68, 8, 0, TWO_PI); ctx.arc(30, 68, 8, 0, TWO_PI); ctx.fill()
