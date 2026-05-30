@@ -422,6 +422,22 @@
       ctx.restore()
     }
 
+    const dir = clockwise ? 1 : -1
+    const headLength = 22
+    const headWidth = 23
+    const headBaseAngle = to - dir * headLength / arrowRadius
+    const tip = pointOnGear(to, arrowRadius)
+    const base = pointOnGear(headBaseAngle, arrowRadius)
+    const normal = headBaseAngle
+    const outer = {
+      x: base.x + Math.cos(normal) * headWidth * .5,
+      y: base.y + Math.sin(normal) * headWidth * .5
+    }
+    const inner = {
+      x: base.x - Math.cos(normal) * headWidth * .5,
+      y: base.y - Math.sin(normal) * headWidth * .5
+    }
+
     ctx.save()
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
@@ -429,31 +445,15 @@
     ctx.shadowBlur = 5
     ctx.lineWidth = 15
     ctx.strokeStyle = 'rgba(47,92,45,.22)'
-    ctx.beginPath(); ctx.arc(0, 0, arrowRadius, from, to, anticlockwise); ctx.stroke()
-    ctx.shadowColor = 'transparent'
-    ctx.lineWidth = 10
-    ctx.strokeStyle = 'rgba(255,255,255,.97)'
-    ctx.beginPath(); ctx.arc(0, 0, arrowRadius, from, to, anticlockwise); ctx.stroke()
-
-    const dir = clockwise ? 1 : -1
-    const tip = pointOnGear(to, arrowRadius)
-    const tangent = to + dir * Math.PI / 2
-    const back = {
-      x: tip.x - Math.cos(tangent) * 25,
-      y: tip.y - Math.sin(tangent) * 25
-    }
-    const normal = to
-    const outer = {
-      x: back.x + Math.cos(normal) * 14,
-      y: back.y + Math.sin(normal) * 14
-    }
-    const inner = {
-      x: back.x - Math.cos(normal) * 14,
-      y: back.y - Math.sin(normal) * 14
-    }
+    ctx.beginPath(); ctx.arc(0, 0, arrowRadius, from, headBaseAngle, anticlockwise); ctx.stroke()
     ctx.fillStyle = 'rgba(47,92,45,.22)'
     drawRoundedArrowHead(tip.x + 2, tip.y + 3, outer.x + 2, outer.y + 3, inner.x + 2, inner.y + 3)
     ctx.fill()
+
+    ctx.shadowColor = 'transparent'
+    ctx.lineWidth = 10
+    ctx.strokeStyle = 'rgba(255,255,255,.97)'
+    ctx.beginPath(); ctx.arc(0, 0, arrowRadius, from, headBaseAngle, anticlockwise); ctx.stroke()
     ctx.fillStyle = 'rgba(255,255,255,.98)'
     drawRoundedArrowHead(tip.x, tip.y, outer.x, outer.y, inner.x, inner.y)
     ctx.fill()
@@ -495,8 +495,8 @@
   }
 
   function drawRobot(){
-    if(assets.robot.ready){ ctx.drawImage(assets.robot, 25, 500, 145, 170); return }
-    ctx.save(); ctx.translate(96, 524)
+    if(assets.robot.ready){ ctx.drawImage(assets.robot, -18, 575, 140, 165); return }
+    ctx.save(); ctx.translate(45, 578)
     ctx.fillStyle = '#dde8ee'; roundRect(-55, 28, 130, 104, 24); ctx.fill()
     ctx.fillStyle = '#f3fbff'; roundRect(-35, 46, 88, 42, 16); ctx.fill()
     ctx.fillStyle = '#364756'; ctx.beginPath(); ctx.arc(-12, 68, 8, 0, TWO_PI); ctx.arc(30, 68, 8, 0, TWO_PI); ctx.fill()
