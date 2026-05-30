@@ -37,32 +37,23 @@
     add: { x: 1118, y: 142, size: 78 },
     trash: { x: 1118, y: 590, size: 92 }
   }
-  const SOLVE_LEVELS = [
-    {
-      name: 'Deur', machine: 'door', target: { x: 616, y: 360, teeth: 12 },
-      stock: [{ teeth: 12, color: '#4fb5e8', accent: '#d9f5ff' }]
-    },
-    {
-      name: 'Lamp', machine: 'lamp', target: { x: 760, y: 360, teeth: 12 },
-      stock: [
-        { teeth: 12, color: '#4fb5e8', accent: '#d9f5ff' },
-        { teeth: 12, color: '#ffd34e', accent: '#fff3b0' }
-      ]
-    },
-    {
-      name: 'Brug', machine: 'bridge', target: { x: 910, y: 360, teeth: 16 },
-      stock: [
-        { teeth: 12, color: '#4fb5e8', accent: '#d9f5ff' },
-        { teeth: 12, color: '#ffd34e', accent: '#fff3b0' },
-        { teeth: 14, color: '#f6a33b', accent: '#ffe6a7' },
-        { teeth: 10, color: '#8261d4', accent: '#e5dcff' }
-      ]
-    }
-  ]
+  const SOLVE_LEVEL_1 = {
+    name: 'Deur',
+    machine: 'door',
+    target: { x: 612, y: 360, teeth: 12 },
+    stock: [
+      { teeth: 12, color: '#4fb5e8', accent: '#d9f5ff' }
+    ]
+  }
 
   const assets = loadImages({
     background: 'assets/background.png',
-    robot: 'assets/robot.png'
+    robot: 'assets/robot.png',
+    axleHub: 'assets/aspunt.png',
+    closedDoor: 'assets/deur_dicht.png',
+    closedShutter: 'assets/rolluik dicht.png',
+    rack: 'assets/tandheugel.png',
+    machineGear: 'assets/tandwiel.png'
   })
 
   let mode = 'menu'
@@ -77,6 +68,7 @@
   let solveLevelIndex = 0
   let levelComplete = false
   let machineProgress = 0
+  let doorProgress = 0
 
   function loadImages(map){
     const out = {}
@@ -135,6 +127,7 @@
     links = []
     clickEffects = []
     machineProgress = 0
+    doorProgress = 0
   }
 
   function startDiscover(){
@@ -147,15 +140,19 @@
     resetDiscover()
   }
 
-  function startSolve(levelIndex = 0){
+  function startSolveLevel1(){
     mode = 'solve'
-    solveLevelIndex = clamp(levelIndex, 0, SOLVE_LEVELS.length - 1)
+    solveLevelIndex = 0
     mainMenu.hidden = true
     gameHud.hidden = false
     levelBadge.hidden = false
     resetBtn.hidden = false
     nextBtn.hidden = true
-    resetSolveLevel()
+    resetSolveLevel1()
+  }
+
+  function startSolve(levelIndex = 0){
+    startSolveLevel1()
   }
 
   function resetDiscover(){
@@ -173,11 +170,12 @@
     propagateRotation()
   }
 
-  function resetSolveLevel(){
-    const level = SOLVE_LEVELS[solveLevelIndex]
-    levelBadge.textContent = `${solveLevelIndex + 1}. ${level.name}`
+  function resetSolveLevel1(){
+    const level = SOLVE_LEVEL_1
+    levelBadge.textContent = '1. Deur'
     levelComplete = false
     machineProgress = 0
+    doorProgress = 0
     nextBtn.hidden = true
     feedback.classList.remove('show')
     const start = makeGear('start', 300, 360, 18, '#59c765', { fixed:true, driver:true, speed:START_SPEED, accent:'#dff6a8' })
@@ -187,7 +185,7 @@
     level.stock.forEach((item, index) => {
       const spacing = 150
       const total = (level.stock.length - 1) * spacing
-      const x = 640 - total / 2 + index * spacing
+      const x = 565 - total / 2 + index * spacing
       const y = 628
       gears.push(makeGear(`stock-${index}`, x, y, item.teeth, item.color, {
         accent: item.accent,
@@ -196,6 +194,10 @@
       }))
     })
     propagateRotation()
+  }
+
+  function resetSolveLevel(){
+    resetSolveLevel1()
   }
 
   function getGear(id){ return gears.find(g => g.id === id) }
@@ -475,10 +477,14 @@
     drag = null
   }
 
+  function isTargetGearPowered(){
+    const target = getGear('target')
+    return !!target && Math.abs(target.speed) > 0.001
+  }
+
   function checkSolveState(){
     if(mode !== 'solve') return
-    const target = getGear('target')
-    const solved = !!target && Math.abs(target.speed) > 0.001
+    const solved = isTargetGearPowered()
     if(solved && !levelComplete){
       levelComplete = true
       showFeedback('Gelukt!')
@@ -536,6 +542,16 @@
     ctx.shadowColor = 'rgba(63,57,37,.24)'
     ctx.shadowBlur = 18
     ctx.shadowOffsetY = 8
+    if(g.target && mode === 'solve' && assets.machineGear.ready){
+      const size = g.outerRadius * 2.08
+      ctx.rotate(g.angle)
+      ctx.drawImage(assets.machineGear, -size / 2, -size / 2, size, size)
+      ctx.rotate(-g.angle)
+      ctx.shadowColor = 'transparent'
+      drawHub(g, 1.05)
+      ctx.restore()
+      return
+    }
     const path = buildGearPath(g)
     const grad = ctx.createRadialGradient(-g.pitchRadius * .35, -g.pitchRadius * .45, 8, 0, 0, g.outerRadius)
     grad.addColorStop(0, '#ffffff')
@@ -563,8 +579,16 @@
     ctx.beginPath(); ctx.arc(0, 0, g.boreRadius, 0, TWO_PI); ctx.fill()
     ctx.fillStyle = 'rgba(255,255,255,.58)'
     ctx.beginPath(); ctx.ellipse(-g.pitchRadius * .25, -g.pitchRadius * .36, g.pitchRadius * .22, 9, -.45, 0, TWO_PI); ctx.fill()
+    drawHub(g, .82)
     if(g.id === 'start') drawStartDirectionArrow(g)
     ctx.restore()
+  }
+
+  function drawHub(g, scale = 1){
+    if(!assets.axleHub.ready) return
+    const width = Math.max(44, g.boreRadius * 2.1) * scale
+    const height = width * assets.axleHub.height / assets.axleHub.width
+    ctx.drawImage(assets.axleHub, -width / 2, -height / 2, width, height)
   }
 
   function drawStartDirectionArrow(g){
@@ -717,19 +741,59 @@
   }
 
   function drawMachine(){
-    const level = SOLVE_LEVELS[solveLevelIndex]
-    const t = machineProgress
-    if(level.machine === 'door') drawDoorMachine(t)
-    if(level.machine === 'lamp') drawLampMachine(t)
-    if(level.machine === 'bridge') drawBridgeMachine(t)
+    drawDoorMachine(doorProgress)
+  }
+
+  function drawImageContained(img, x, y, w, h){
+    if(!img.ready) return false
+    ctx.drawImage(img, x, y, w, h)
+    return true
   }
 
   function drawDoorMachine(t){
-    ctx.save(); ctx.translate(850, 320)
-    ctx.fillStyle = '#8a5a35'; roundRect(0, -35, 235, 215, 18); ctx.fill()
-    ctx.fillStyle = '#4f321f'; roundRect(22, -8, 191, 188, 12); ctx.fill()
-    ctx.fillStyle = '#67b7df'; roundRect(36 + t * 116, 10, 84, 150, 8); ctx.fill()
-    ctx.fillStyle = '#ffd34e'; ctx.beginPath(); ctx.arc(100 + t * 116, 86, 7, 0, TWO_PI); ctx.fill()
+    const target = getGear('target')
+    const gearCenter = target || SOLVE_LEVEL_1.target
+    const rackTravel = 116 * t
+    const rackX = gearCenter.x + 47 + rackTravel
+    const rackY = gearCenter.y - 27
+    const doorX = 852
+    const doorY = 184
+    const doorW = 238
+    const doorH = 336
+
+    ctx.save()
+    ctx.fillStyle = 'rgba(89,56,35,.22)'
+    roundRect(842, 142, 330, 432, 26); ctx.fill()
+    ctx.fillStyle = '#6e4628'
+    roundRect(862, 166, 292, 384, 18); ctx.fill()
+    ctx.fillStyle = '#2e2118'
+    roundRect(doorX + 18, doorY + 22, doorW - 36, doorH - 38, 12); ctx.fill()
+    ctx.fillStyle = 'rgba(142,216,234,.55)'
+    roundRect(doorX + 35, doorY + 44, doorW - 70, doorH - 85, 10); ctx.fill()
+
+    ctx.save()
+    ctx.beginPath(); roundRect(doorX, doorY, doorW, doorH, 16); ctx.clip()
+    const panelLift = 242 * t
+    if(!drawImageContained(assets.closedShutter, doorX, doorY - panelLift, doorW, doorH)){
+      const slatH = 24
+      ctx.fillStyle = '#b7c7cb'; roundRect(doorX, doorY - panelLift, doorW, doorH, 16); ctx.fill()
+      ctx.strokeStyle = '#8ca5ad'; ctx.lineWidth = 3
+      for(let y = doorY + slatH - panelLift; y < doorY + doorH; y += slatH){ ctx.beginPath(); ctx.moveTo(doorX + 8, y); ctx.lineTo(doorX + doorW - 8, y); ctx.stroke() }
+    }
+    ctx.restore()
+
+    ctx.strokeStyle = '#58351f'; ctx.lineWidth = 8
+    ctx.beginPath(); ctx.moveTo(rackX + 208, rackY + 27); ctx.lineTo(doorX + doorW - 4, doorY + 66 - panelLift); ctx.stroke()
+    ctx.fillStyle = '#d9893d'; ctx.beginPath(); ctx.arc(doorX + doorW - 4, doorY + 66 - panelLift, 13, 0, TWO_PI); ctx.fill()
+
+    ctx.save()
+    ctx.translate(rackX, rackY)
+    if(assets.rack.ready) ctx.drawImage(assets.rack, 0, 0, 242, 22)
+    else { ctx.fillStyle = '#d5a04d'; roundRect(0, 3, 242, 17, 5); ctx.fill() }
+    ctx.restore()
+
+    ctx.strokeStyle = 'rgba(255,246,207,.75)'; ctx.lineWidth = 4; ctx.setLineDash([10, 8])
+    ctx.beginPath(); ctx.moveTo(gearCenter.x + 38, gearCenter.y - 18); ctx.lineTo(rackX + 28, rackY + 11); ctx.stroke(); ctx.setLineDash([])
     ctx.restore()
   }
 
@@ -774,14 +838,18 @@
     drawEffects(dt)
   }
 
+  function updateSolveMachine(dt){
+    const moving = mode === 'solve' && isTargetGearPowered()
+    doorProgress = clamp(doorProgress + (moving ? dt * .72 : -dt * .95), 0, 1)
+    machineProgress = doorProgress
+  }
+
   function update(dt){
     gears.forEach(g => {
       if(!drag || drag.id !== g.id) g.angle += g.speed * dt
       g.pulse = Math.max(0, g.pulse - dt * 2.8)
     })
-    const target = getGear('target')
-    const moving = mode === 'solve' && target && Math.abs(target.speed) > 0.001
-    machineProgress = clamp(machineProgress + (moving ? dt * 2.4 : -dt * 2.1), 0, 1)
+    updateSolveMachine(dt)
     hintAlpha = hasDraggedDiscover ? Math.max(0, hintAlpha - dt * 2.6) : Math.min(1, hintAlpha + dt * 1.4)
   }
 
@@ -810,12 +878,12 @@
   }
 
   menuDiscoverBtn.addEventListener('click', startDiscover)
-  menuSolveBtn.addEventListener('click', () => startSolve(0))
+  menuSolveBtn.addEventListener('click', startSolveLevel1)
   backBtn.addEventListener('click', showMenu)
-  resetBtn.addEventListener('click', resetSolveLevel)
+  resetBtn.addEventListener('click', resetSolveLevel1)
   nextBtn.addEventListener('click', () => {
-    if(solveLevelIndex < SOLVE_LEVELS.length - 1) startSolve(solveLevelIndex + 1)
-    else showMenu()
+    // Level 1 is the only solve level for now. Keep the button friendly but inactive.
+    showFeedback('Gelukt!')
   })
   canvas.addEventListener('pointerdown', onPointerDown)
   canvas.addEventListener('pointermove', onPointerMove)
