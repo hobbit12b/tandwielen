@@ -40,7 +40,7 @@
   const SOLVE_LEVEL_1 = {
     name: 'Deur',
     machine: 'door',
-    target: { x: 615, y: 264, teeth: 12 },
+    target: { x: 535, y: 304, teeth: 12, angle: 0 },
     stock: [
       { teeth: 12, color: '#4fb5e8', accent: '#d9f5ff' }
     ]
@@ -53,12 +53,13 @@
     panelH: 430,
     travel: 228,
     rackClosedX: 470,
-    rackY: 150,
+    rackY: 183,
     rackW: 560,
-    rackH: 40,
+    rackH: 43,
+    level1RackMeshOffset: 0,
     brackets: [
-      { x: 728, y: 112, w: 72, h: 144 },
-      { x: 982, y: 112, w: 72, h: 144 }
+      { x: 748, y: 100, w: 34, h: 68 },
+      { x: 1002, y: 100, w: 34, h: 68 }
     ],
     frameOverlay: { x: 748, y: 88, w: 292, h: 492, openingX: 806, openingY: 138, openingW: 202, openingH: 430 }
   }
@@ -67,7 +68,6 @@
     background: 'assets/background.png',
     level1Background: 'assets/background2.png',
     robot: 'assets/robot.png',
-    axleHub: 'assets/aspunt.png',
     room: 'assets/vertrek.png',
     slidingDoor: 'assets/schuifdeur.png',
     bracket: 'assets/beugel.png',
@@ -198,8 +198,8 @@
     doorProgress = 0
     nextBtn.hidden = true
     feedback.classList.remove('show')
-    const start = makeGear('start', 305, 320, 18, '#59c765', { fixed:true, driver:true, speed:START_SPEED, accent:'#dff6a8' })
-    const target = makeGear('target', level.target.x, level.target.y, level.target.teeth, '#ec6fae', { fixed:true, target:true, accent:'#ffd8eb' })
+    const start = makeGear('start', 305, 320, 18, '#59c765', { fixed:true, driver:true, speed:-START_SPEED, accent:'#dff6a8' })
+    const target = makeGear('target', level.target.x, level.target.y, level.target.teeth, '#ec6fae', { fixed:true, target:true, accent:'#ffd8eb', angle: level.target.angle })
     gears = [start, target]
     links = []
     level.stock.forEach((item, index) => {
@@ -595,27 +595,10 @@
     ctx.strokeStyle = 'rgba(255,255,255,.46)'
     ctx.beginPath(); ctx.arc(0, 0, g.pitchRadius, 0, TWO_PI); ctx.stroke()
     ctx.setLineDash([])
-    ctx.fillStyle = 'rgba(92,63,46,.22)'
-    ctx.beginPath(); ctx.arc(0, 0, g.boreRadius + 9, 0, TWO_PI); ctx.fill()
-    const hole = ctx.createRadialGradient(-8, -10, 3, 0, 0, g.boreRadius + 7)
-    hole.addColorStop(0, '#fff7d9')
-    hole.addColorStop(.55, '#c79453')
-    hole.addColorStop(1, '#6d4a35')
-    ctx.fillStyle = hole
-    ctx.beginPath(); ctx.arc(0, 0, g.boreRadius, 0, TWO_PI); ctx.fill()
     ctx.fillStyle = 'rgba(255,255,255,.58)'
     ctx.beginPath(); ctx.ellipse(-g.pitchRadius * .25, -g.pitchRadius * .36, g.pitchRadius * .22, 9, -.45, 0, TWO_PI); ctx.fill()
-    drawHub(g, .82)
     if(g.id === 'start') drawStartDirectionArrow(g)
     ctx.restore()
-  }
-
-  function drawHub(g, scale = 1){
-    if(!assets.axleHub.ready) return
-    const aspect = assets.axleHub.width / assets.axleHub.height
-    const width = Math.max(54, g.boreRadius * 2.45) * scale
-    const height = aspect > 4 ? Math.max(22, width / 4.4) : width * assets.axleHub.height / assets.axleHub.width
-    ctx.drawImage(assets.axleHub, -width / 2, -height / 2, width, height)
   }
 
   function drawStartDirectionArrow(g){
@@ -669,14 +652,13 @@
   }
 
   function drawBackground(){
-    const background = mode === 'solve' ? assets.level1Background : assets.background
+    const background = assets.background
     if(background.ready) ctx.drawImage(background, 0, 0, WORLD.w, WORLD.h)
     else {
       const sky = ctx.createLinearGradient(0, 0, 0, WORLD.h)
       sky.addColorStop(0, '#9fe4f2'); sky.addColorStop(1, '#f8d99b')
       ctx.fillStyle = sky; ctx.fillRect(0, 0, WORLD.w, WORLD.h)
     }
-    if(mode === 'solve') return
     ctx.fillStyle = 'rgba(122,82,43,.18)'; ctx.fillRect(0, 602, WORLD.w, 118)
     ctx.fillStyle = '#cf8847'; roundRect(130, 590, 1020, 54, 24); ctx.fill()
     ctx.fillStyle = 'rgba(91,55,29,.22)'
@@ -770,7 +752,12 @@
   }
 
   function drawMachine(){
-    drawDoorMachine(doorProgress)
+    drawDoorMachineBase(doorProgress)
+  }
+
+  function drawLevel1RackAndBrackets(){
+    drawLevel1Rack(doorProgress)
+    drawLevel1Brackets()
   }
 
   function drawImageCover(img, x, y, w, h){
@@ -785,11 +772,10 @@
     return true
   }
 
-  function drawDoorMachine(t){
+  function drawDoorMachineBase(t){
     const door = LEVEL_1_DOOR
     const travel = door.travel * t
     const panelX = door.panelClosedX - travel
-    const rackX = door.rackClosedX - travel
 
     ctx.save()
 
@@ -807,32 +793,35 @@
     }
     ctx.restore()
 
-    // 4. Tandheugel vast aan de bovenkant van de deur, tanden omlaag.
+    // 3. Vast deurframe bovenop de schuifdeur, zodat de deur achter de deurpost verdwijnt.
+    drawLevel1BackgroundFrame()
+
+    ctx.restore()
+  }
+
+  function drawLevel1BackgroundFrame(){
+    if(assets.level1Background.ready) ctx.drawImage(assets.level1Background, 0, 0, WORLD.w, WORLD.h)
+    else drawLevel1FrameOverlay()
+  }
+
+  function drawLevel1Rack(t){
+    const door = LEVEL_1_DOOR
+    const rackX = door.rackClosedX - door.travel * t + door.level1RackMeshOffset
     ctx.save()
     ctx.translate(rackX, door.rackY)
     if(assets.rack.ready){
       ctx.drawImage(assets.rack, 0, 0, door.rackW, door.rackH)
     } else drawFallbackRack(door.rackW, door.rackH)
     ctx.restore()
+  }
 
-    // Korte koppelplaat: maakt duidelijk dat deurpaneel en tandheugel samen één bewegend geheel zijn.
-    ctx.fillStyle = '#7d8b90'
-    roundRect(panelX + 20, door.rackY + door.rackH - 5, 56, door.panelY - door.rackY + 14, 7); ctx.fill()
-    ctx.fillStyle = '#eef6f7'
-    ctx.beginPath(); ctx.arc(panelX + 36, door.panelY + 7, 4, 0, TWO_PI); ctx.arc(panelX + 60, door.panelY + 7, 4, 0, TWO_PI); ctx.fill()
-
-    // Hergebruik het frame uit background2.png boven de bewegende deur zodat de deur achter de post schuift.
-    drawLevel1FrameOverlay()
-
-    // 5. Vaste beugels bovenop de zijposten, vóór de tandheugel.
-    door.brackets.forEach(bracket => {
+  function drawLevel1Brackets(){
+    LEVEL_1_DOOR.brackets.forEach(bracket => {
       if(!drawImageContained(assets.bracket, bracket.x, bracket.y, bracket.w, bracket.h)){
         ctx.fillStyle = '#6f7982'
-        roundRect(bracket.x, bracket.y, bracket.w, bracket.h, 12); ctx.fill()
+        roundRect(bracket.x, bracket.y, bracket.w, bracket.h, 8); ctx.fill()
       }
     })
-
-    ctx.restore()
   }
 
   function drawLevel1FrameOverlay(){
@@ -897,12 +886,14 @@
   }
 
   function render(dt){
-    drawBackground()
     if(mode === 'solve'){
       drawMachine()
+      gears.filter(g => !g.stock).forEach(drawGear)
+      drawLevel1RackAndBrackets()
       drawStockTray()
-      gears.forEach(drawGear)
+      gears.filter(g => g.stock).forEach(drawGear)
     } else {
+      drawBackground()
       drawSolveStage()
       gears.forEach(drawGear)
     }
@@ -915,7 +906,7 @@
     const target = getGear('target')
     const moving = mode === 'solve' && target && Math.abs(target.speed) > 0.001
     if(moving){
-      const linearRackSpeed = target.speed * target.pitchRadius
+      const linearRackSpeed = -target.speed * target.pitchRadius
       doorProgress = clamp(doorProgress + linearRackSpeed * dt / LEVEL_1_RACK_TRAVEL, 0, 1)
     } else {
       doorProgress = clamp(doorProgress - dt * .55, 0, 1)
