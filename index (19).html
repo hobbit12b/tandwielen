@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tandwielen: welke kant draait het?</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --ink: #1f2937;
+      --muted: #6b7280;
+      --blue: #2563eb;
+      --green: #16a34a;
+      --red: #dc2626;
+      --yellow: #facc15;
+      --purple: #7c3aed;
+      --shadow: 0 16px 40px rgba(31, 41, 55, 0.12);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top, #e0ecff, var(--bg));
+      color: var(--ink);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 18px;
+    }
+
+    .app {
+      width: min(1050px, 100%);
+      background: var(--card);
+      border-radius: 28px;
+      box-shadow: var(--shadow);
+      padding: 22px;
+      display: grid;
+      gap: 16px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    h1 {
+      font-size: clamp(1.55rem, 4vw, 2.4rem);
+      margin: 0;
+      letter-spacing: -0.03em;
+    }
+
+    .subtitle {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 1rem;
+    }
+
+    .scorebox {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+    }
+
+    .pill {
+      background: #f3f4f6;
+      border-radius: 999px;
+      padding: 9px 14px;
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+
+    .main {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    @media (max-width: 820px) {
+      .main { grid-template-columns: 1fr; }
+    }
+
+    .stage {
+      background: linear-gradient(180deg, #eff6ff, #ffffff);
+      border: 2px solid #dbeafe;
+      border-radius: 24px;
+      min-height: 430px;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .gear-row {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 0;
+      width: 100%;
+      transform: translateY(12px);
+    }
+
+    .gear-wrap {
+      width: clamp(92px, 16vw, 156px);
+      aspect-ratio: 1;
+      position: relative;
+      margin-left: -8px;
+      margin-right: -8px;
+    }
+
+    .gear-wrap:first-child { margin-left: 0; }
+    .gear-wrap:last-child { margin-right: 0; }
+
+    .gear {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at center, #fff 0 16%, transparent 17%),
+        repeating-conic-gradient(from 0deg, currentColor 0deg 12deg, transparent 12deg 24deg),
+        radial-gradient(circle at center, currentColor 0 55%, transparent 56%);
+      color: var(--blue);
+      filter: drop-shadow(0 10px 12px rgba(31,41,55,0.16));
+    }
+
+    .gear::before {
+      content: "";
+      position: absolute;
+      inset: 18%;
+      border-radius: 50%;
+      background: #ffffff;
+      border: 6px solid currentColor;
+    }
+
+    .gear::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 12%;
+      width: 9px;
+      height: 38%;
+      border-radius: 999px;
+      background: #111827;
+      transform: translateX(-50%);
+      transform-origin: 50% 100%;
+    }
+
+    .gear-wrap.target .gear {
+      color: var(--purple);
+      outline: 5px solid rgba(124, 58, 237, 0.22);
+      outline-offset: 7px;
+    }
+
+    .gear-wrap.start .gear {
+      color: var(--green);
+    }
+
+    .start-label,
+    .target-label {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      white-space: nowrap;
+      border-radius: 999px;
+      padding: 7px 11px;
+      font-weight: 800;
+      font-size: clamp(0.78rem, 2vw, 0.95rem);
+      box-shadow: 0 7px 16px rgba(31,41,55,0.12);
+    }
+
+    .start-label {
+      bottom: -42px;
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .target-label {
+      top: -48px;
+      background: #ede9fe;
+      color: #5b21b6;
+    }
+
+    .arrow-big {
+      position: absolute;
+      top: -56px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: clamp(2.4rem, 6vw, 4rem);
+      line-height: 1;
+      filter: drop-shadow(0 6px 8px rgba(31,41,55,0.18));
+    }
+
+    .panel {
+      border-radius: 24px;
+      background: #f9fafb;
+      border: 2px solid #e5e7eb;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      justify-content: space-between;
+    }
+
+    .question {
+      font-size: clamp(1.25rem, 3vw, 1.7rem);
+      font-weight: 850;
+      line-height: 1.12;
+      margin: 0;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 1.02rem;
+      margin: 0;
+      line-height: 1.4;
+    }
+
+    .buttons {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 18px;
+      padding: 16px 14px;
+      font-size: 1.2rem;
+      font-weight: 850;
+      cursor: pointer;
+      box-shadow: 0 9px 18px rgba(31,41,55,0.12);
+      transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+    }
+
+    button:hover { transform: translateY(-2px); }
+    button:active { transform: translateY(1px); box-shadow: none; }
+    button:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+
+    .left { background: #dbeafe; color: #1d4ed8; }
+    .right { background: #fee2e2; color: #b91c1c; }
+    .next { background: #111827; color: white; width: 100%; }
+    .explain { background: #fef3c7; color: #92400e; width: 100%; }
+
+    .feedback {
+      min-height: 92px;
+      border-radius: 20px;
+      background: #ffffff;
+      padding: 14px;
+      border: 2px dashed #d1d5db;
+      font-size: 1.05rem;
+      line-height: 1.35;
+    }
+
+    .feedback.good {
+      border-color: #86efac;
+      background: #f0fdf4;
+    }
+
+    .feedback.bad {
+      border-color: #fca5a5;
+      background: #fef2f2;
+    }
+
+    .feedback strong { display: block; margin-bottom: 4px; }
+
+    .spin-cw { animation: spinCw 1.5s linear infinite; }
+    .spin-ccw { animation: spinCcw 1.5s linear infinite; }
+
+    @keyframes spinCw { to { transform: rotate(360deg); } }
+    @keyframes spinCcw { to { transform: rotate(-360deg); } }
+
+    .legend {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    @media (max-width: 620px) {
+      .legend { grid-template-columns: 1fr; }
+    }
+
+    .rule {
+      border-radius: 18px;
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      padding: 12px;
+      font-size: 0.96rem;
+      line-height: 1.35;
+    }
+
+    .rule b { display: block; margin-bottom: 3px; }
+
+    .teacher-note {
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.35;
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div>
+        <h1>Tandwielen: welke kant draait het?</h1>
+        <p class="subtitle">Kijk goed. Denk eerst. Kies daarna linksom of rechtsom.</p>
+      </div>
+      <div class="scorebox">
+        <div class="pill">Vraag <span id="round">1</span>/10</div>
+        <div class="pill">Goed: <span id="score">0</span></div>
+      </div>
+    </header>
+
+    <section class="main">
+      <div class="stage" aria-label="Tandwielen speelveld">
+        <div class="gear-row" id="gearRow"></div>
+      </div>
+
+      <aside class="panel">
+        <div>
+          <p class="question" id="question">Naar welke kant draait het paarse tandwiel?</p>
+          <p class="hint" id="levelHint">Tip: elk tandwiel draait steeds de andere kant op dan zijn buur.</p>
+        </div>
+
+        <div class="buttons">
+          <button class="left" id="leftBtn" onclick="answer('linksom')">↺ linksom</button>
+          <button class="right" id="rightBtn" onclick="answer('rechtsom')">↻ rechtsom</button>
+        </div>
+
+        <button class="explain" onclick="showReason()">Laat denkstap zien</button>
+
+        <div class="feedback" id="feedback">
+          Kies de draairichting van het paarse tandwiel.
+        </div>
+
+        <button class="next" id="nextBtn" onclick="nextPuzzle()" disabled>Volgende vraag</button>
+      </aside>
+    </section>
+
+    <section class="legend">
+      <div class="rule"><b>Regel 1</b>Raakt een tandwiel een ander tandwiel? Dan draait het de andere kant op.</div>
+      <div class="rule"><b>Regel 2</b>Een oneven aantal tandwielen eindigt hetzelfde als het eerste tandwiel.</div>
+      <div class="rule"><b>Regel 3</b>Een even aantal tandwielen eindigt anders dan het eerste tandwiel.</div>
+    </section>
+
+    <p class="teacher-note">Leerkracht-tip: laat kinderen eerst met hun vinger boven de tandwielen wisselen: rechtsom, linksom, rechtsom. Daarna pas klikken.</p>
+  </main>
+
+  <script>
+    const puzzles = [
+      { gears: 2, start: 'rechtsom', targetIndex: 1 },
+      { gears: 3, start: 'rechtsom', targetIndex: 2 },
+      { gears: 4, start: 'linksom', targetIndex: 3 },
+      { gears: 5, start: 'rechtsom', targetIndex: 4 },
+      { gears: 3, start: 'linksom', targetIndex: 1 },
+      { gears: 4, start: 'rechtsom', targetIndex: 2 },
+      { gears: 5, start: 'linksom', targetIndex: 3 },
+      { gears: 6, start: 'rechtsom', targetIndex: 5 },
+      { gears: 6, start: 'linksom', targetIndex: 4 },
+      { gears: 7, start: 'rechtsom', targetIndex: 6 }
+    ];
+
+    let index = 0;
+    let score = 0;
+    let answered = false;
+
+    function directionFor(puzzle, gearIndex) {
+      const switches = gearIndex;
+      const sameAsStart = switches % 2 === 0;
+      if (sameAsStart) return puzzle.start;
+      return puzzle.start === 'rechtsom' ? 'linksom' : 'rechtsom';
+    }
+
+    function arrowFor(direction) {
+      return direction === 'rechtsom' ? '↻' : '↺';
+    }
+
+    function spinClass(direction) {
+      return direction === 'rechtsom' ? 'spin-cw' : 'spin-ccw';
+    }
+
+    function render() {
+      const puzzle = puzzles[index];
+      const row = document.getElementById('gearRow');
+      row.innerHTML = '';
+
+      for (let i = 0; i < puzzle.gears; i++) {
+        const dir = directionFor(puzzle, i);
+        const wrap = document.createElement('div');
+        wrap.className = 'gear-wrap';
+        if (i === 0) wrap.classList.add('start');
+        if (i === puzzle.targetIndex) wrap.classList.add('target');
+
+        const gear = document.createElement('div');
+        gear.className = 'gear';
+        gear.dataset.dir = dir;
+
+        if (i === 0) {
+          const arrow = document.createElement('div');
+          arrow.className = 'arrow-big';
+          arrow.textContent = arrowFor(puzzle.start);
+          wrap.appendChild(arrow);
+
+          const start = document.createElement('div');
+          start.className = 'start-label';
+          start.textContent = 'start';
+          wrap.appendChild(start);
+        }
+
+        if (i === puzzle.targetIndex) {
+          const target = document.createElement('div');
+          target.className = 'target-label';
+          target.textContent = 'welke kant?';
+          wrap.appendChild(target);
+        }
+
+        wrap.appendChild(gear);
+        row.appendChild(wrap);
+      }
+
+      document.getElementById('round').textContent = index + 1;
+      document.getElementById('score').textContent = score;
+      document.getElementById('feedback').className = 'feedback';
+      document.getElementById('feedback').textContent = 'Kies de draairichting van het paarse tandwiel.';
+      document.getElementById('nextBtn').disabled = true;
+      document.getElementById('leftBtn').disabled = false;
+      document.getElementById('rightBtn').disabled = false;
+      answered = false;
+    }
+
+    function answer(choice) {
+      if (answered) return;
+      answered = true;
+
+      const puzzle = puzzles[index];
+      const correct = directionFor(puzzle, puzzle.targetIndex);
+      const feedback = document.getElementById('feedback');
+
+      revealSpin();
+
+      if (choice === correct) {
+        score++;
+        feedback.className = 'feedback good';
+        feedback.innerHTML = `<strong>Goed gezien.</strong>Het paarse tandwiel draait ${correct}. Elk tandwiel wisselt van kant.`;
+      } else {
+        feedback.className = 'feedback bad';
+        feedback.innerHTML = `<strong>Nog niet.</strong>Het paarse tandwiel draait ${correct}. Probeer de tandwielen één voor één te volgen.`;
+      }
+
+      document.getElementById('score').textContent = score;
+      document.getElementById('nextBtn').disabled = false;
+      document.getElementById('leftBtn').disabled = true;
+      document.getElementById('rightBtn').disabled = true;
+    }
+
+    function revealSpin() {
+      document.querySelectorAll('.gear').forEach(gear => {
+        gear.classList.add(spinClass(gear.dataset.dir));
+      });
+    }
+
+    function showReason() {
+      const puzzle = puzzles[index];
+      const steps = [];
+      for (let i = 0; i <= puzzle.targetIndex; i++) {
+        steps.push(`${i + 1}: ${directionFor(puzzle, i)}`);
+      }
+      const feedback = document.getElementById('feedback');
+      feedback.className = 'feedback';
+      feedback.innerHTML = `<strong>Denkstappen</strong>${steps.join(' → ')}. Dus het paarse tandwiel draait ${directionFor(puzzle, puzzle.targetIndex)}.`;
+    }
+
+    function nextPuzzle() {
+      index++;
+      if (index >= puzzles.length) {
+        endGame();
+      } else {
+        render();
+      }
+    }
+
+    function endGame() {
+      document.querySelector('.stage').innerHTML = `<div style="text-align:center; max-width: 520px;"><div style="font-size:5rem;">⚙️</div><h2 style="font-size:2.2rem; margin:0 0 8px;">Klaar!</h2><p style="font-size:1.35rem; line-height:1.35;">Je had ${score} van de ${puzzles.length} goed.</p><p style="color:#6b7280; font-size:1.05rem;">Bespreek samen: wanneer draait het laatste tandwiel hetzelfde als het eerste?</p></div>`;
+      document.getElementById('question').textContent = 'Einde van het spel';
+      document.getElementById('levelHint').textContent = 'Start opnieuw om nog een keer te oefenen.';
+      document.getElementById('feedback').className = 'feedback good';
+      document.getElementById('feedback').innerHTML = '<strong>Reflectievraag</strong>Wat gebeurt er als je er één tandwiel tussen zet? En wat als je er twee tussen zet?';
+      document.getElementById('leftBtn').disabled = true;
+      document.getElementById('rightBtn').disabled = true;
+      const next = document.getElementById('nextBtn');
+      next.disabled = false;
+      next.textContent = 'Opnieuw spelen';
+      next.onclick = () => {
+        index = 0;
+        score = 0;
+        next.textContent = 'Volgende vraag';
+        next.onclick = nextPuzzle;
+        document.querySelector('.stage').innerHTML = '<div class="gear-row" id="gearRow"></div>';
+        render();
+      };
+    }
+
+    render();
+  </script>
+</body>
+</html>
