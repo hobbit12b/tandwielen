@@ -10,16 +10,29 @@
   <main id="app" aria-label="Tandwielenwerkplaats">
     <canvas id="gameCanvas" aria-label="Tandwielspel"></canvas>
 
-    <div class="topbar" aria-label="Spelkeuze">
-      <button id="discoverBtn" class="mode active" type="button">Ontdek</button>
-      <button id="chooseBtn" class="mode" type="button">Kies</button>
-    </div>
-
-    <section id="choosePanel" class="choose-panel" aria-label="Kies de draairichting" hidden>
-      <button id="leftBtn" class="answer" type="button" aria-label="Linksom"><span>↺</span></button>
-      <button id="rightBtn" class="answer" type="button" aria-label="Rechtsom"><span>↻</span></button>
+    <section id="mainMenu" class="main-menu" aria-label="Hoofdmenu">
+      <div class="menu-card">
+        <h1>Tandwielen</h1>
+        <div class="menu-actions">
+          <button id="menuDiscoverBtn" class="menu-choice discover-choice" type="button">
+            <span>Ontdekken</span>
+            <small>Vrij spelen</small>
+          </button>
+          <button id="menuSolveBtn" class="menu-choice solve-choice" type="button">
+            <span>Oplossen</span>
+            <small>Puzzel</small>
+          </button>
+        </div>
+      </div>
     </section>
 
+    <div id="gameHud" class="game-hud" hidden>
+      <button id="backBtn" class="hud-button" type="button">Menu</button>
+      <div id="levelBadge" class="level-badge" aria-live="polite" hidden></div>
+      <button id="resetBtn" class="hud-button" type="button" hidden>Reset</button>
+    </div>
+
+    <button id="nextBtn" class="next-button" type="button" hidden>Volgende</button>
     <div id="feedback" class="feedback" aria-live="polite"></div>
   </main>
   <script src="game.js"></script>
