@@ -198,7 +198,7 @@
     doorProgress = 0
     nextBtn.hidden = true
     feedback.classList.remove('show')
-    const start = makeGear('start', 305, 320, 18, '#59c765', { fixed:true, driver:true, speed:-START_SPEED, accent:'#dff6a8' })
+    const start = makeGear('start', 258, 436, 18, '#59c765', { fixed:true, driver:true, speed:-START_SPEED, accent:'#dff6a8' })
     const target = makeGear('target', level.target.x, level.target.y, level.target.teeth, '#ec6fae', { fixed:true, target:true, accent:'#ffd8eb', angle: level.target.angle })
     gears = [start, target]
     links = []
@@ -287,6 +287,16 @@
     }
   }
 
+  function solveRackClearanceY(gear){
+    if(mode !== 'solve' || gear.target) return 108 + gear.outerRadius
+    return Math.max(108 + gear.outerRadius, LEVEL_1_DOOR.rackY + LEVEL_1_DOOR.rackH + gear.outerRadius + 28)
+  }
+
+  function violatesSolveRackClearance(gear){
+    if(mode !== 'solve' || gear.target || gear.stock) return false
+    return gear.y < solveRackClearanceY(gear)
+  }
+
   function wouldOverlapAnyGear(candidateGear, ignoredGearIds = []){
     const ignored = new Set(ignoredGearIds)
     return gears.some(other => {
@@ -323,6 +333,7 @@
     if(anchor.stock || loose.stock) return false
     if(Math.abs(dist(anchor, loose) - wanted) > LINK_DISTANCE_TOLERANCE) return false
     if(isContactBlocked(anchor, loose)) return false
+    if(violatesSolveRackClearance(anchor) || violatesSolveRackClearance(loose)) return false
     if(wouldOverlapAnyGear(anchor, [loose.id]) || wouldOverlapAnyGear(loose, [anchor.id])) return false
     return true
   }
@@ -385,6 +396,7 @@
       const wanted = meshDistance(candidate.anchor, gear)
       const snappedGear = { ...gear, stock:false, x: candidate.anchor.x + Math.cos(meshAngle) * wanted, y: candidate.anchor.y + Math.sin(meshAngle) * wanted }
       if(wouldOverlapAnyGear(snappedGear, [candidate.anchor.id])) continue
+      if(violatesSolveRackClearance(snappedGear)) continue
       if(isContactBlocked(candidate.anchor, snappedGear)) continue
       removeLinksForGear(gear.id)
       gear.stock = false
@@ -500,7 +512,7 @@
     const gear = getGear(drag.id)
     gear.stock = false
     gear.x = clamp(p.x - drag.dx, gear.outerRadius + 18, WORLD.w - gear.outerRadius - 18)
-    gear.y = clamp(p.y - drag.dy, 108 + gear.outerRadius, WORLD.h - gear.outerRadius - 18)
+    gear.y = clamp(p.y - drag.dy, solveRackClearanceY(gear), WORLD.h - gear.outerRadius - 18)
     const movedDistance = Math.hypot(p.x - drag.startX, p.y - drag.startY)
     if(movedDistance > 8) drag.moved = true
     if(mode === 'discover' && !overTrash(p) && movedDistance > 90 && trySnap(gear)) drag = null
