@@ -40,18 +40,37 @@
   const SOLVE_LEVEL_1 = {
     name: 'Deur',
     machine: 'door',
-    target: { x: 620, y: 382, teeth: 12 },
+    target: { x: 615, y: 264, teeth: 12 },
     stock: [
       { teeth: 12, color: '#4fb5e8', accent: '#d9f5ff' }
     ]
   }
 
+  const LEVEL_1_DOOR = {
+    panelClosedX: 792,
+    panelY: 138,
+    panelW: 228,
+    panelH: 430,
+    travel: 228,
+    rackClosedX: 470,
+    rackY: 150,
+    rackW: 560,
+    rackH: 40,
+    brackets: [
+      { x: 728, y: 112, w: 72, h: 144 },
+      { x: 982, y: 112, w: 72, h: 144 }
+    ],
+    frameOverlay: { x: 748, y: 88, w: 292, h: 492, openingX: 806, openingY: 138, openingW: 202, openingH: 430 }
+  }
+
   const assets = loadImages({
     background: 'assets/background.png',
+    level1Background: 'assets/background2.png',
     robot: 'assets/robot.png',
     axleHub: 'assets/aspunt.png',
-    closedDoor: 'assets/deur_dicht.png',
-    closedShutter: 'assets/rolluik dicht.png',
+    room: 'assets/vertrek.png',
+    slidingDoor: 'assets/schuifdeur.png',
+    bracket: 'assets/beugel.png',
     rack: 'assets/tandheugel.png',
     machineGear: 'assets/tandwiel.png'
   })
@@ -69,7 +88,7 @@
   let levelComplete = false
   let machineProgress = 0
   let doorProgress = 0
-  const LEVEL_1_RACK_TRAVEL = 128
+  const LEVEL_1_RACK_TRAVEL = LEVEL_1_DOOR.travel
 
   function loadImages(map){
     const out = {}
@@ -179,7 +198,7 @@
     doorProgress = 0
     nextBtn.hidden = true
     feedback.classList.remove('show')
-    const start = makeGear('start', 300, 360, 18, '#59c765', { fixed:true, driver:true, speed:START_SPEED, accent:'#dff6a8' })
+    const start = makeGear('start', 305, 320, 18, '#59c765', { fixed:true, driver:true, speed:START_SPEED, accent:'#dff6a8' })
     const target = makeGear('target', level.target.x, level.target.y, level.target.teeth, '#ec6fae', { fixed:true, target:true, accent:'#ffd8eb' })
     gears = [start, target]
     links = []
@@ -650,12 +669,14 @@
   }
 
   function drawBackground(){
-    if(assets.background.ready) ctx.drawImage(assets.background, 0, 0, WORLD.w, WORLD.h)
+    const background = mode === 'solve' ? assets.level1Background : assets.background
+    if(background.ready) ctx.drawImage(background, 0, 0, WORLD.w, WORLD.h)
     else {
       const sky = ctx.createLinearGradient(0, 0, 0, WORLD.h)
       sky.addColorStop(0, '#9fe4f2'); sky.addColorStop(1, '#f8d99b')
       ctx.fillStyle = sky; ctx.fillRect(0, 0, WORLD.w, WORLD.h)
     }
+    if(mode === 'solve') return
     ctx.fillStyle = 'rgba(122,82,43,.18)'; ctx.fillRect(0, 602, WORLD.w, 118)
     ctx.fillStyle = '#cf8847'; roundRect(130, 590, 1020, 54, 24); ctx.fill()
     ctx.fillStyle = 'rgba(91,55,29,.22)'
@@ -752,6 +773,12 @@
     drawDoorMachine(doorProgress)
   }
 
+  function drawImageCover(img, x, y, w, h){
+    if(!img.ready) return false
+    ctx.drawImage(img, x, y, w, h)
+    return true
+  }
+
   function drawImageContained(img, x, y, w, h){
     if(!img.ready) return false
     ctx.drawImage(img, x, y, w, h)
@@ -759,82 +786,72 @@
   }
 
   function drawDoorMachine(t){
-    const target = getGear('target')
-    const gearCenter = target || SOLVE_LEVEL_1.target
-    const rackTravel = LEVEL_1_RACK_TRAVEL * t
-    const rackWidth = 390
-    const rackH = 34
-    const rackX = gearCenter.x - 165 + rackTravel
-    const rackY = gearCenter.y - (target?.outerRadius || gearRadii(SOLVE_LEVEL_1.target.teeth).outerRadius) - rackH + 8
-    const rackRight = rackX + rackWidth
-    const doorX = 815
-    const doorY = 236
-    const doorW = 280
-    const doorH = 306
-    const panelW = 238
-    const panelH = 272
-    const panelX = doorX + 16 + rackTravel
-    const panelY = doorY + 21
-    const pocketX = doorX + doorW + 8
+    const door = LEVEL_1_DOOR
+    const travel = door.travel * t
+    const panelX = door.panelClosedX - travel
+    const rackX = door.rackClosedX - travel
 
     ctx.save()
 
-    // Door frame and receiver pocket: the panel remains visible and slides into this rail.
-    ctx.fillStyle = 'rgba(89,56,35,.22)'
-    roundRect(doorX - 18, doorY - 46, 380, doorH + 92, 26); ctx.fill()
-    ctx.fillStyle = '#6e4628'
-    roundRect(doorX - 2, doorY - 16, doorW + 22, doorH + 32, 18); ctx.fill()
-    ctx.fillStyle = '#2e2118'
-    roundRect(doorX + 16, doorY + 16, doorW - 28, doorH - 22, 12); ctx.fill()
-    ctx.fillStyle = 'rgba(142,216,234,.48)'
-    roundRect(doorX + 36, doorY + 38, doorW - 70, doorH - 64, 10); ctx.fill()
+    // 2. Vertrek achter de opening. De PNG heeft dezelfde canvasverhouding als de achtergrond.
+    drawImageCover(assets.room, 0, 0, WORLD.w, WORLD.h)
 
-    // Rails make the horizontal sliding direction explicit.
-    ctx.fillStyle = '#51331e'
-    roundRect(doorX + 4, doorY - 31, doorW + 94, 18, 9); ctx.fill()
-    roundRect(doorX + 4, doorY + doorH + 13, doorW + 94, 16, 8); ctx.fill()
-    ctx.fillStyle = '#d5a04d'
-    roundRect(doorX + 18, doorY - 26, doorW + 66, 8, 4); ctx.fill()
-    roundRect(doorX + 18, doorY + doorH + 17, doorW + 66, 7, 4); ctx.fill()
-
-    // One rigid connection: the rack end is bolted to the top of the sliding panel.
-    ctx.fillStyle = '#9aa9ad'
-    roundRect(panelX + 3, rackY + 8, 24, panelY - rackY + 15, 8); ctx.fill()
-    ctx.fillStyle = '#eef6f7'
-    ctx.beginPath(); ctx.arc(panelX + 15, rackY + 18, 4, 0, TWO_PI); ctx.arc(panelX + 15, panelY + 7, 4, 0, TWO_PI); ctx.fill()
-
+    // 3. Eén schuifdeurpaneel. Het paneel schuift links achter de deurpost.
     ctx.save()
-    ctx.translate(panelX, panelY)
-    if(!drawImageContained(assets.closedDoor, 0, 0, panelW, panelH)){
-      ctx.fillStyle = '#b7c7cb'; roundRect(0, 0, panelW, panelH, 14); ctx.fill()
-      ctx.strokeStyle = '#8ca5ad'; ctx.lineWidth = 4
-      for(let x = 28; x < panelW - 20; x += 44){ ctx.beginPath(); ctx.moveTo(x, 12); ctx.lineTo(x, panelH - 12); ctx.stroke() }
+    ctx.beginPath()
+    ctx.rect(door.panelClosedX - door.travel - 8, door.panelY - 10, door.panelW + door.travel + 18, door.panelH + 18)
+    ctx.clip()
+    if(!drawImageContained(assets.slidingDoor, panelX, door.panelY, door.panelW, door.panelH)){
+      ctx.fillStyle = '#126ed3'
+      roundRect(panelX, door.panelY, door.panelW, door.panelH, 16); ctx.fill()
     }
     ctx.restore()
 
-    // Receiver pocket is drawn over the far edge so hiding is explained by a physical housing.
-    ctx.fillStyle = '#5f3b23'
-    roundRect(pocketX, doorY - 19, 84, doorH + 38, 14); ctx.fill()
-    ctx.fillStyle = 'rgba(39,27,20,.45)'
-    roundRect(pocketX + 12, doorY + 6, 58, doorH - 12, 10); ctx.fill()
-    ctx.fillStyle = 'rgba(255,246,207,.18)'
-    roundRect(pocketX + 8, doorY - 12, 12, doorH + 24, 6); ctx.fill()
-
-    // Rack teeth are flipped downward and kept at a fixed mesh height above the target gear.
+    // 4. Tandheugel vast aan de bovenkant van de deur, tanden omlaag.
     ctx.save()
-    ctx.translate(rackX, rackY)
+    ctx.translate(rackX, door.rackY)
     if(assets.rack.ready){
-      ctx.save(); ctx.translate(0, rackH); ctx.scale(1, -1); ctx.drawImage(assets.rack, 0, 0, rackWidth, rackH); ctx.restore()
-    } else drawFallbackRack(rackWidth, rackH)
+      ctx.drawImage(assets.rack, 0, 0, door.rackW, door.rackH)
+    } else drawFallbackRack(door.rackW, door.rackH)
     ctx.restore()
 
-    // A small clamp at the rack end reinforces that the rack and door panel are one assembly.
+    // Korte koppelplaat: maakt duidelijk dat deurpaneel en tandheugel samen één bewegend geheel zijn.
     ctx.fillStyle = '#7d8b90'
-    roundRect(rackRight - 32, rackY + 5, 42, rackH - 4, 7); ctx.fill()
+    roundRect(panelX + 20, door.rackY + door.rackH - 5, 56, door.panelY - door.rackY + 14, 7); ctx.fill()
     ctx.fillStyle = '#eef6f7'
-    ctx.beginPath(); ctx.arc(rackRight - 20, rackY + 17, 4, 0, TWO_PI); ctx.arc(rackRight - 5, rackY + 17, 4, 0, TWO_PI); ctx.fill()
+    ctx.beginPath(); ctx.arc(panelX + 36, door.panelY + 7, 4, 0, TWO_PI); ctx.arc(panelX + 60, door.panelY + 7, 4, 0, TWO_PI); ctx.fill()
+
+    // Hergebruik het frame uit background2.png boven de bewegende deur zodat de deur achter de post schuift.
+    drawLevel1FrameOverlay()
+
+    // 5. Vaste beugels bovenop de zijposten, vóór de tandheugel.
+    door.brackets.forEach(bracket => {
+      if(!drawImageContained(assets.bracket, bracket.x, bracket.y, bracket.w, bracket.h)){
+        ctx.fillStyle = '#6f7982'
+        roundRect(bracket.x, bracket.y, bracket.w, bracket.h, 12); ctx.fill()
+      }
+    })
 
     ctx.restore()
+  }
+
+  function drawLevel1FrameOverlay(){
+    const overlay = LEVEL_1_DOOR.frameOverlay
+    if(!assets.level1Background.ready) return
+    const strips = [
+      { x: overlay.x, y: overlay.y, w: overlay.w, h: overlay.openingY - overlay.y },
+      { x: overlay.x, y: overlay.openingY, w: overlay.openingX - overlay.x, h: overlay.openingH },
+      { x: overlay.openingX + overlay.openingW, y: overlay.openingY, w: overlay.x + overlay.w - overlay.openingX - overlay.openingW, h: overlay.openingH },
+      { x: overlay.x, y: overlay.openingY + overlay.openingH, w: overlay.w, h: overlay.y + overlay.h - overlay.openingY - overlay.openingH }
+    ]
+    strips.forEach(strip => {
+      if(strip.w <= 0 || strip.h <= 0) return
+      const sx = strip.x / WORLD.w * assets.level1Background.width
+      const sy = strip.y / WORLD.h * assets.level1Background.height
+      const sw = strip.w / WORLD.w * assets.level1Background.width
+      const sh = strip.h / WORLD.h * assets.level1Background.height
+      ctx.drawImage(assets.level1Background, sx, sy, sw, sh, strip.x, strip.y, strip.w, strip.h)
+    })
   }
 
   function drawFallbackRack(width, height){
@@ -882,9 +899,9 @@
   function render(dt){
     drawBackground()
     if(mode === 'solve'){
+      drawMachine()
       drawStockTray()
       gears.forEach(drawGear)
-      drawMachine()
     } else {
       drawSolveStage()
       gears.forEach(drawGear)
