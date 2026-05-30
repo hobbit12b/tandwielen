@@ -1,489 +1,452 @@
 (() => {
-  const canvas = document.getElementById('gearCanvas');
-  const ctx = canvas.getContext('2d');
+  const canvas = document.getElementById('gameCanvas')
+  const ctx = canvas.getContext('2d')
+  const discoverBtn = document.getElementById('discoverBtn')
+  const chooseBtn = document.getElementById('chooseBtn')
+  const choosePanel = document.getElementById('choosePanel')
+  const leftBtn = document.getElementById('leftBtn')
+  const rightBtn = document.getElementById('rightBtn')
+  const feedback = document.getElementById('feedback')
 
-  const menu = document.getElementById('menu');
-  const titleSign = document.getElementById('titleSign');
-  const feedback = document.getElementById('feedback');
-  const predictControls = document.getElementById('predictControls');
-  const discoverTray = document.getElementById('discoverTray');
-  const teacherPanel = document.getElementById('teacherPanel');
-  const soundBtn = document.getElementById('soundBtn');
+  const WORLD = { w: 1280, h: 720 }
+  const TOOTH_PITCH = 36 // vaste lineaire afstand tussen tanden op de pitch-cirkel
+  const TOOTH_DEPTH = 32
+  const TOOTH_ADDENDUM = TOOTH_DEPTH * 0.44
+  const TOOTH_DEDENDUM = TOOTH_DEPTH * 0.56
+  const MESH_TOOTH_OVERLAP = 6
+  const SNAP_TOLERANCE = 42
+  const START_SPEED = 0.34 // rustig ontdekspeelgoed, geen arcade-snelheid
+  const TWO_PI = Math.PI * 2
 
-  let W = 0, H = 0, DPR = 1;
-  let mode = 'menu';
-  let gears = [];
-  let dragging = null;
-  let pointer = { x: 0, y: 0 };
-  let audioCtx = null;
-  let soundOn = true;
-  let teacherMode = false;
-  let slowFactor = 1;
-  let score = 0;
-  let lastTime = performance.now();
+  const assets = loadImages({
+    background: 'assets/background.png',
+    robot: 'assets/robot.png',
+    gear01: 'assets/gear01.png',
+    gear02: 'assets/gear02.png',
+    gear03: 'assets/gear03.png',
+    gear04: 'assets/gear04.png',
+    question: 'assets/gear_question.png'
+  })
 
-  const COLORS = {
-    green: '#78cc24',
-    yellow: '#ffd52d',
-    blue: '#2aa5ff',
-    orange: '#ff8b19',
-    purple: '#9b45e8',
-    red: '#ef4444'
-  };
+  let mode = 'discover'
+  let gears = []
+  let links = []
+  let drag = null
+  let lastTime = performance.now()
+  let clickEffects = []
+  let chooseQuestion = null
 
-  function resize() {
-    const rect = canvas.getBoundingClientRect();
-    DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-    W = rect.width;
-    H = rect.height;
-    canvas.width = Math.round(W * DPR);
-    canvas.height = Math.round(H * DPR);
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  function loadImages(map){
+    const out = {}
+    Object.entries(map).forEach(([key, src]) => {
+      const img = new Image()
+      img.onload = () => { img.ready = true }
+      img.onerror = () => { img.ready = false }
+      img.src = src
+      out[key] = img
+    })
+    return out
   }
 
-  function gear(id, x, y, r, color, opts = {}) {
+  function clamp(v, min, max){ return Math.max(min, Math.min(max, v)) }
+  function normAngle(a){ return Math.atan2(Math.sin(a), Math.cos(a)) }
+  function dist(a, b){ return Math.hypot(a.x - b.x, a.y - b.y) }
+
+  function gearRadii(teeth){
+    // Alle tandwielen gebruiken dezelfde tandsteek. Daardoor groeit de pitch-radius
+    // lineair met het aantal tanden en blijven grote/kleine tandwielen logisch grijpen.
+    const pitchRadius = teeth * TOOTH_PITCH / TWO_PI
     return {
-      id, x, y, homeX: x, homeY: y, r,
-      teeth: opts.teeth || 16,
-      color,
+      pitchRadius,
+      outerRadius: pitchRadius + TOOTH_ADDENDUM,
+      rootRadius: pitchRadius - TOOTH_DEDENDUM,
+      boreRadius: Math.max(18, pitchRadius * 0.23)
+    }
+  }
+
+  function makeGear(id, x, y, teeth, color, opts = {}){
+    const radii = gearRadii(teeth)
+    return {
+      id, x, y, teeth, color,
+      accent: opts.accent || '#ffffff',
+      fixed: !!opts.fixed,
+      driver: !!opts.driver,
+      target: !!opts.target,
       angle: opts.angle || 0,
       speed: opts.speed || 0,
-      lockedTo: opts.lockedTo || null,
-      fixed: !!opts.fixed,
-      target: !!opts.target,
-      unknown: !!opts.unknown,
-      start: !!opts.start,
-      connected: !!opts.connected,
-      draggable: opts.draggable !== false,
-      dir: opts.dir || 1
-    };
+      pulse: 0,
+      ...radii
+    }
   }
 
-  function setupDiscover() {
-    mode = 'discover';
-    titleSign.textContent = 'Ontdek';
-    menu.classList.add('hidden');
-    predictControls.classList.add('hidden');
-    discoverTray.classList.remove('hidden');
-    feedback.classList.add('hidden');
-    score = 0;
-
-    const cy = H * 0.49;
-    const r = Math.min(W, H) * 0.085;
+  function resetDiscover(){
     gears = [
-      gear('motor', W * 0.22, cy, r, COLORS.green, {
-        fixed: true, draggable: false, start: true, connected: true, speed: 0.42, dir: 1
-      }),
-      gear('loose1', W * 0.48, cy + r * 1.05, r * 0.88, COLORS.yellow),
-      gear('loose2', W * 0.63, cy - r * 0.95, r * 0.78, COLORS.blue),
-      gear('loose3', W * 0.75, cy + r * 0.65, r * 0.7, COLORS.orange)
-    ];
+      makeGear('start', 310, 370, 14, '#59c765', { fixed:true, driver:true, speed:START_SPEED, accent:'#dff6a8' }),
+      makeGear('blue', 620, 245, 12, '#4fb5e8', { accent:'#d9f5ff', angle:.2 }),
+      makeGear('orange', 690, 505, 16, '#f6a33b', { accent:'#ffe6a7', angle:.7 }),
+      makeGear('pink', 930, 345, 10, '#ec6fae', { accent:'#ffd8eb', angle:1.1 })
+    ]
+    links = []
+    clickEffects = []
+    propagateRotation()
   }
 
-  function setupPredict() {
-    mode = 'predict';
-    titleSign.textContent = 'Kies!';
-    menu.classList.add('hidden');
-    discoverTray.classList.add('hidden');
-    predictControls.classList.remove('hidden');
-    feedback.classList.add('hidden');
-
-    const cy = H * 0.48;
-    const baseR = Math.min(W, H) * 0.078;
-    const count = 2 + Math.min(5, Math.floor(score / 2) + 1);
-    const startX = W * 0.24;
-    const spacing = baseR * 1.72;
-
-    gears = [];
-    const startDir = Math.random() > 0.5 ? 1 : -1;
-    for (let i = 0; i < count; i++) {
-      const color = i === 0 ? COLORS.green : i === count - 1 ? COLORS.purple : [COLORS.yellow, COLORS.blue, COLORS.orange][(i - 1) % 3];
-      gears.push(gear(`p${i}`, startX + i * spacing, cy + Math.sin(i * 1.1) * baseR * .18, baseR * (i % 2 ? .9 : 1), color, {
-        fixed: true,
-        draggable: false,
-        connected: true,
-        start: i === 0,
-        target: i === count - 1,
-        unknown: i === count - 1,
-        speed: i === 0 ? 0.42 * startDir : 0,
-        dir: i === 0 ? startDir : 0
-      }));
-    }
-    solveConnections();
+  function resetChoose(){
+    const driverTeeth = [10, 12, 14][Math.floor(Math.random() * 3)]
+    const targetTeeth = [10, 12, 16][Math.floor(Math.random() * 3)]
+    const driverSpeed = START_SPEED * (Math.random() < 0.5 ? 1 : -1)
+    const driver = makeGear('choose-driver', 500, 355, driverTeeth, '#59c765', { fixed:true, driver:true, speed:driverSpeed, accent:'#dff6a8' })
+    const target = makeGear('choose-target', 0, 0, targetTeeth, '#8261d4', { fixed:true, target:true, accent:'#e5dcff' })
+    const line = nearestValleyAngle(driver, Math.random() * TWO_PI)
+    const distance = meshDistance(driver, target)
+    target.x = driver.x + Math.cos(line) * distance
+    target.y = driver.y + Math.sin(line) * distance
+    phaseGearForMesh(driver, target, line)
+    gears = [driver, target]
+    links = [{ a: driver.id, b: target.id }]
+    propagateRotation()
+    chooseQuestion = { answer: Math.sign(target.speed) }
   }
 
-  function solveConnections() {
-    if (!gears.length) return;
-    gears[0].connected = true;
-    gears[0].dir = gears[0].dir || 1;
-    gears[0].speed = Math.abs(gears[0].speed || 0.42) * gears[0].dir;
+  function setMode(next){
+    mode = next
+    discoverBtn.classList.toggle('active', mode === 'discover')
+    chooseBtn.classList.toggle('active', mode === 'choose')
+    choosePanel.hidden = mode !== 'choose'
+    drag = null
+    if(mode === 'discover') resetDiscover()
+    else resetChoose()
+  }
 
-    for (let pass = 0; pass < gears.length; pass++) {
-      for (const a of gears) {
-        if (!a.connected) continue;
-        for (const b of gears) {
-          if (a === b || b.connected) continue;
-          if (touching(a, b, 16)) {
-            b.connected = true;
-            b.lockedTo = a.id;
-            b.dir = -Math.sign(a.speed || a.dir || 1);
-            b.speed = Math.abs(a.speed || 0.42) * (a.r / b.r) * b.dir;
-          }
-        }
-      }
+  function getGear(id){ return gears.find(g => g.id === id) }
+  function connectedTo(id){
+    return links.flatMap(l => l.a === id ? [l.b] : l.b === id ? [l.a] : [])
+  }
+
+  function propagateRotation(){
+    // Draairichting verspreidt door het netwerk: buren draaien tegengesteld en
+    // de snelheid volgt uit gelijke tangentiële snelheid op de pitch-cirkels.
+    gears.forEach(g => { if(!g.driver) g.speed = 0 })
+    const queue = gears.filter(g => g.driver)
+    const seen = new Set(queue.map(g => g.id))
+    while(queue.length){
+      const gear = queue.shift()
+      connectedTo(gear.id).forEach(nextId => {
+        const next = getGear(nextId)
+        if(!next || seen.has(next.id)) return
+        next.speed = -gear.speed * gear.teeth / next.teeth
+        seen.add(next.id)
+        queue.push(next)
+      })
     }
   }
 
-  function touching(a, b, tolerance = 12) {
-    const d = Math.hypot(a.x - b.x, a.y - b.y);
-    return Math.abs(d - (a.r + b.r)) < tolerance;
+  function disconnectGear(gear){
+    links = links.filter(l => l.a !== gear.id && l.b !== gear.id)
+    if(!gear.driver) gear.speed = 0
+    propagateRotation()
   }
 
-  function snapIfPossible(g) {
-    const candidates = gears.filter(o => o !== g && o.connected);
-    let best = null;
-    let bestDelta = 99999;
 
-    for (const o of candidates) {
-      const dx = g.x - o.x;
-      const dy = g.y - o.y;
-      const dist = Math.hypot(dx, dy) || 1;
-      const targetDist = g.r + o.r;
-      const delta = Math.abs(dist - targetDist);
-      if (delta < bestDelta && delta < Math.max(26, g.r * .32)) {
-        best = o;
-        bestDelta = delta;
-      }
+  function meshDistance(a, b){
+    // De hartafstand is bewust een aparte meshDistance: iets kleiner dan alleen
+    // pitchRadius + pitchRadius. Daardoor zakt de brede tandtop visueel in de
+    // diepe root-valley van de buur, zonder dat de pitch-steek verandert.
+    return a.pitchRadius + b.pitchRadius - MESH_TOOTH_OVERLAP
+  }
+
+  function nearestValleyAngle(anchor, angle){
+    const pitchAngle = TWO_PI / anchor.teeth
+    // Valleien liggen precies halverwege twee tandtoppen van het vaste wiel.
+    const valleyIndex = Math.round((normAngle(angle - anchor.angle) / pitchAngle) - 0.5)
+    return anchor.angle + (valleyIndex + 0.5) * pitchAngle
+  }
+
+  function phaseGearForMesh(anchor, loose, meshAngle){
+    const loosePitch = TWO_PI / loose.teeth
+    // Op de contactlijn wijst een tandtop van het losse wiel naar een vallei van
+    // het anker. Zo vallen de rechthoekige tanden zichtbaar in de open ruimtes.
+    const toothIndex = Math.round((meshAngle + Math.PI - loose.angle) / loosePitch)
+    loose.angle = meshAngle + Math.PI - toothIndex * loosePitch
+  }
+
+  function trySnap(gear){
+    if(mode !== 'discover') return false
+    const anchors = gears.filter(g => g.id !== gear.id && Math.abs(g.speed) > 0.001)
+    let best = null
+    anchors.forEach(anchor => {
+      const wanted = meshDistance(anchor, gear)
+      const d = dist(anchor, gear)
+      const error = Math.abs(d - wanted)
+      if(error < SNAP_TOLERANCE && (!best || error < best.error)) best = { anchor, error, d }
+    })
+    if(!best) return false
+
+    const rawAngle = Math.atan2(gear.y - best.anchor.y, gear.x - best.anchor.x)
+    const meshAngle = nearestValleyAngle(best.anchor, rawAngle)
+    const wanted = meshDistance(best.anchor, gear)
+    gear.x = best.anchor.x + Math.cos(meshAngle) * wanted
+    gear.y = best.anchor.y + Math.sin(meshAngle) * wanted
+    phaseGearForMesh(best.anchor, gear, meshAngle)
+    links = links.filter(l => l.a !== gear.id && l.b !== gear.id)
+    links.push({ a: best.anchor.id, b: gear.id })
+    propagateRotation()
+    popClick(gear.x, gear.y, gear)
+    return true
+  }
+
+  function popClick(x, y, gear){
+    gear.pulse = 1
+    clickEffects.push({ x, y, age: 0 })
+  }
+
+  function gearAt(p){
+    for(let i = gears.length - 1; i >= 0; i--){
+      const g = gears[i]
+      if(Math.hypot(p.x - g.x, p.y - g.y) <= g.outerRadius + 10) return g
     }
-
-    if (!best) return false;
-
-    const dx = g.x - best.x;
-    const dy = g.y - best.y;
-    const dist = Math.hypot(dx, dy) || 1;
-    const ux = dx / dist;
-    const uy = dy / dist;
-
-    g.x = best.x + ux * (g.r + best.r);
-    g.y = best.y + uy * (g.r + best.r);
-    g.connected = true;
-    g.lockedTo = best.id;
-    g.dir = -Math.sign(best.speed || best.dir || 1);
-    g.speed = Math.abs(best.speed || 0.42) * (best.r / g.r) * g.dir;
-    g.draggable = true;
-    playSuccess();
-    showFeedback('Klik!');
-    return true;
+    return null
   }
 
-  function addGear() {
-    if (mode !== 'discover') return;
-    const palette = [COLORS.yellow, COLORS.blue, COLORS.orange, COLORS.purple];
-    const r = Math.min(W, H) * (0.06 + Math.random() * 0.025);
-    gears.push(gear(`loose${Date.now()}`, W * (0.42 + Math.random() * .3), H * (0.34 + Math.random() * .28), r, palette[gears.length % palette.length]));
-  }
-
-  function resetDiscover() {
-    if (mode === 'discover') setupDiscover();
-    else if (mode === 'predict') setupPredict();
-  }
-
-  function nextPredict() {
-    score++;
-    showFeedback('Goed!');
-    playSuccess();
-    setTimeout(setupPredict, 700);
-  }
-
-  function answer(dir) {
-    if (mode !== 'predict') return;
-    const target = gears[gears.length - 1];
-    const correct = Math.sign(target.speed) === dir;
-    target.unknown = false;
-    if (correct) {
-      nextPredict();
-    } else {
-      showFeedback('Bijna!');
-      playWrong();
-      setTimeout(setupPredict, 900);
-    }
-  }
-
-  function drawGear(g) {
-    const teeth = g.teeth;
-    const rootR = g.r * .88;
-    const outerR = g.r;
-    const innerR = g.r * .44;
-    const hubR = g.r * .16;
-
-    ctx.save();
-    ctx.translate(g.x, g.y);
-    ctx.rotate(g.angle);
-
-    ctx.beginPath();
-    for (let i = 0; i < teeth * 2; i++) {
-      const a = i * Math.PI / teeth;
-      const r = i % 2 === 0 ? outerR : rootR;
-      const x = Math.cos(a) * r;
-      const y = Math.sin(a) * r;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.closePath();
-
-    const grad = ctx.createRadialGradient(-g.r * .3, -g.r * .35, g.r * .15, 0, 0, g.r);
-    grad.addColorStop(0, lighten(g.color, .28));
-    grad.addColorStop(.58, g.color);
-    grad.addColorStop(1, darken(g.color, .24));
-    ctx.fillStyle = grad;
-    ctx.fill();
-    ctx.lineWidth = Math.max(4, g.r * .045);
-    ctx.strokeStyle = darken(g.color, .32);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.arc(0, 0, innerR, 0, Math.PI * 2);
-    ctx.fillStyle = g.color;
-    ctx.fill();
-    ctx.lineWidth = Math.max(3, g.r * .025);
-    ctx.strokeStyle = lighten(g.color, .18);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.arc(0, 0, hubR, 0, Math.PI * 2);
-    ctx.fillStyle = '#2f3945';
-    ctx.fill();
-    ctx.lineWidth = Math.max(3, g.r * .025);
-    ctx.strokeStyle = '#111827';
-    ctx.stroke();
-
-    ctx.restore();
-
-    if (g.connected || g.start || mode === 'predict') drawArrow(g);
-    if (g.unknown) drawQuestion(g);
-    if (g.target && !g.unknown) drawGlow(g);
-  }
-
-  function drawArrow(g) {
-    const visible = mode === 'discover' ? g.connected : (!g.unknown || g.start);
-    if (!visible) return;
-    const dir = Math.sign(g.speed || g.dir || 1);
-    ctx.save();
-    ctx.translate(g.x, g.y);
-    ctx.rotate(g.angle * .35);
-
-    ctx.strokeStyle = 'white';
-    ctx.lineWidth = Math.max(8, g.r * .12);
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    const start = dir > 0 ? -1.1 : 1.1;
-    const end = dir > 0 ? 1.8 : -1.8;
-    ctx.arc(0, 0, g.r * .52, start, end, dir < 0);
-    ctx.stroke();
-
-    const endAngle = end;
-    const ax = Math.cos(endAngle) * g.r * .52;
-    const ay = Math.sin(endAngle) * g.r * .52;
-    ctx.translate(ax, ay);
-    ctx.rotate(endAngle + (dir > 0 ? Math.PI / 2 : -Math.PI / 2));
-    ctx.fillStyle = 'white';
-    ctx.beginPath();
-    ctx.moveTo(0, -g.r * .16);
-    ctx.lineTo(g.r * .18, g.r * .18);
-    ctx.lineTo(-g.r * .18, g.r * .18);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-  }
-
-  function drawQuestion(g) {
-    ctx.save();
-    ctx.translate(g.x, g.y);
-    ctx.shadowColor = 'rgba(155,69,232,.8)';
-    ctx.shadowBlur = 22;
-    ctx.fillStyle = 'white';
-    ctx.font = `900 ${g.r * .92}px Trebuchet MS`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('?', 0, 2);
-    ctx.restore();
-  }
-
-  function drawGlow(g) {
-    ctx.save();
-    ctx.translate(g.x, g.y);
-    ctx.strokeStyle = 'rgba(255,255,255,.8)';
-    ctx.lineWidth = 8;
-    ctx.beginPath();
-    ctx.arc(0, 0, g.r * 1.18, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function drawGhostLine() {
-    if (!dragging) return;
-    const g = dragging.gear;
-    const candidates = gears.filter(o => o !== g && o.connected);
-    for (const o of candidates) {
-      const d = Math.hypot(g.x - o.x, g.y - o.y);
-      if (Math.abs(d - (g.r + o.r)) < Math.max(34, g.r * .42)) {
-        ctx.save();
-        ctx.strokeStyle = 'rgba(255,255,255,.85)';
-        ctx.setLineDash([8, 8]);
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.moveTo(o.x, o.y);
-        ctx.lineTo(g.x, g.y);
-        ctx.stroke();
-        ctx.restore();
-      }
+  function pointerToWorld(evt){
+    const rect = canvas.getBoundingClientRect()
+    return {
+      x: (evt.clientX - rect.left) / rect.width * WORLD.w,
+      y: (evt.clientY - rect.top) / rect.height * WORLD.h
     }
   }
 
-  function loop(now) {
-    const dt = Math.min(.05, (now - lastTime) / 1000);
-    lastTime = now;
+  function onPointerDown(evt){
+    const p = pointerToWorld(evt)
+    const gear = gearAt(p)
+    if(!gear || gear.fixed || mode !== 'discover') return
+    canvas.setPointerCapture(evt.pointerId)
+    disconnectGear(gear)
+    drag = { id: gear.id, dx: p.x - gear.x, dy: p.y - gear.y, pointerId: evt.pointerId }
+    gears = gears.filter(g => g.id !== gear.id).concat(gear)
+  }
 
-    ctx.clearRect(0, 0, W, H);
-    for (const g of gears) {
-      if (g.connected || mode === 'predict') {
-        g.angle += (g.speed || 0) * dt * slowFactor;
-      }
-      drawGear(g);
+  function onPointerMove(evt){
+    if(!drag) return
+    const gear = getGear(drag.id)
+    const p = pointerToWorld(evt)
+    gear.x = clamp(p.x - drag.dx, gear.outerRadius + 18, WORLD.w - gear.outerRadius - 18)
+    gear.y = clamp(p.y - drag.dy, 126 + gear.outerRadius, WORLD.h - gear.outerRadius - 18)
+    if(trySnap(gear)) drag = null
+  }
+
+  function onPointerUp(evt){
+    if(!drag || drag.pointerId !== evt.pointerId) return
+    const gear = getGear(drag.id)
+    trySnap(gear)
+    drag = null
+  }
+
+  function pointOnGear(angle, radius){
+    return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius }
+  }
+
+  function gearLineTo(path, angle, radius){
+    const p = pointOnGear(angle, radius)
+    path.lineTo(p.x, p.y)
+  }
+
+  function gearCurveTo(path, controlAngle, controlRadius, angle, radius){
+    const c = pointOnGear(controlAngle, controlRadius)
+    const p = pointOnGear(angle, radius)
+    path.quadraticCurveTo(c.x, c.y, p.x, p.y)
+  }
+
+  function buildGearPath(gear){
+    const path = new Path2D()
+    const pitch = TWO_PI / gear.teeth
+    const start = gear.angle - pitch * .50
+    const first = pointOnGear(start, gear.rootRadius)
+    path.moveTo(first.x, first.y)
+
+    for(let i = 0; i < gear.teeth; i++){
+      const c = gear.angle + i * pitch
+      // Eén tand bestaat uit een brede, bijna rechte top, twee zachte flanken en
+      // een diepe afgeronde valley. De top gebruikt veel van de tandsteek, zodat
+      // groep-3 leerlingen duidelijk een bloktand in een opening zien vallen.
+      const valleyLeft = c - pitch * .50
+      const valleyFloorEnd = c - pitch * .34
+      const leftShoulder = c - pitch * .21
+      const topLeft = c - pitch * .15
+      const topRight = c + pitch * .15
+      const rightShoulder = c + pitch * .21
+      const valleyFloorStart = c + pitch * .34
+      const valleyRight = c + pitch * .50
+
+      // Afgeronde bodem tussen twee tanden: een root-radius boog in plaats van
+      // een V-punt. Dit maakt de opening breed en mechanisch leesbaar.
+      path.arc(0, 0, gear.rootRadius, valleyLeft, valleyFloorEnd, false)
+
+      // Linkerflank: zacht gebogen van root naar buiten, met een afgeronde hoek
+      // naar de brede tooth top.
+      gearCurveTo(path, c - pitch * .28, gear.rootRadius + TOOTH_DEPTH * .20, leftShoulder, gear.pitchRadius + TOOTH_DEPTH * .04)
+      gearCurveTo(path, c - pitch * .19, gear.outerRadius, topLeft, gear.outerRadius)
+
+      // Brede afgeronde tooth top. Omdat dit een outer-radius boog is, blijft de
+      // tand stomp en glossy in plaats van stekelig of zaagtandvormig.
+      path.arc(0, 0, gear.outerRadius, topLeft, topRight, false)
+
+      // Rechterflank terug naar de volgende diepe valley.
+      gearCurveTo(path, c + pitch * .19, gear.outerRadius, rightShoulder, gear.pitchRadius + TOOTH_DEPTH * .04)
+      gearCurveTo(path, c + pitch * .28, gear.rootRadius + TOOTH_DEPTH * .20, valleyFloorStart, gear.rootRadius)
+      gearLineTo(path, valleyRight, gear.rootRadius)
     }
-    drawGhostLine();
-    requestAnimationFrame(loop);
+    path.closePath()
+    return path
   }
 
-  function pointerPos(e) {
-    const rect = canvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  function drawGear(g){
+    ctx.save()
+    ctx.translate(g.x, g.y)
+    const scale = 1 + g.pulse * .035
+    ctx.scale(scale, scale)
+
+    ctx.shadowColor = 'rgba(63,57,37,.24)'
+    ctx.shadowBlur = 18
+    ctx.shadowOffsetY = 8
+    const path = buildGearPath(g)
+    const grad = ctx.createRadialGradient(-g.pitchRadius * .35, -g.pitchRadius * .45, 8, 0, 0, g.outerRadius)
+    grad.addColorStop(0, '#ffffff')
+    grad.addColorStop(.18, g.accent)
+    grad.addColorStop(.52, g.color)
+    grad.addColorStop(1, shade(g.color, -28))
+    ctx.fillStyle = grad
+    ctx.fill(path)
+    ctx.shadowColor = 'transparent'
+    ctx.lineWidth = 4
+    ctx.strokeStyle = 'rgba(89,62,36,.22)'
+    ctx.stroke(path)
+
+    ctx.setLineDash([6, 9])
+    ctx.lineWidth = 1.5
+    ctx.strokeStyle = 'rgba(255,255,255,.46)'
+    ctx.beginPath()
+    ctx.arc(0, 0, g.pitchRadius, 0, TWO_PI)
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    ctx.fillStyle = 'rgba(92,63,46,.22)'
+    ctx.beginPath(); ctx.arc(0, 0, g.boreRadius + 9, 0, TWO_PI); ctx.fill()
+    const hole = ctx.createRadialGradient(-8, -10, 3, 0, 0, g.boreRadius + 7)
+    hole.addColorStop(0, '#fff7d9')
+    hole.addColorStop(.55, '#c79453')
+    hole.addColorStop(1, '#6d4a35')
+    ctx.fillStyle = hole
+    ctx.beginPath(); ctx.arc(0, 0, g.boreRadius, 0, TWO_PI); ctx.fill()
+    ctx.fillStyle = 'rgba(255,255,255,.58)'
+    ctx.beginPath(); ctx.ellipse(-g.pitchRadius * .25, -g.pitchRadius * .36, g.pitchRadius * .22, 9, -.45, 0, TWO_PI); ctx.fill()
+    ctx.restore()
   }
 
-  canvas.addEventListener('pointerdown', e => {
-    if (mode !== 'discover') return;
-    const p = pointerPos(e);
-    const sorted = [...gears].reverse();
-    const hit = sorted.find(g => g.draggable && Math.hypot(p.x - g.x, p.y - g.y) < g.r);
-    if (!hit || hit.fixed) return;
-    dragging = { gear: hit, dx: p.x - hit.x, dy: p.y - hit.y };
-    hit.connected = false;
-    hit.lockedTo = null;
-    hit.speed = 0;
-    canvas.setPointerCapture(e.pointerId);
-  });
+  function shade(hex, percent){
+    const num = parseInt(hex.slice(1), 16)
+    const amt = Math.round(2.55 * percent)
+    const r = clamp((num >> 16) + amt, 0, 255)
+    const g = clamp((num >> 8 & 255) + amt, 0, 255)
+    const b = clamp((num & 255) + amt, 0, 255)
+    return `rgb(${r},${g},${b})`
+  }
 
-  canvas.addEventListener('pointermove', e => {
-    if (!dragging) return;
-    const p = pointerPos(e);
-    dragging.gear.x = p.x - dragging.dx;
-    dragging.gear.y = p.y - dragging.dy;
-  });
-
-  canvas.addEventListener('pointerup', e => {
-    if (!dragging) return;
-    const g = dragging.gear;
-    dragging = null;
-    if (!snapIfPossible(g)) {
-      playTone(180, .08, 'triangle');
+  function drawBackground(){
+    if(assets.background.ready) ctx.drawImage(assets.background, 0, 0, WORLD.w, WORLD.h)
+    else {
+      const sky = ctx.createLinearGradient(0, 0, 0, WORLD.h)
+      sky.addColorStop(0, '#9fe4f2'); sky.addColorStop(1, '#f8d99b')
+      ctx.fillStyle = sky; ctx.fillRect(0, 0, WORLD.w, WORLD.h)
     }
-  });
-
-  function showFeedback(text) {
-    feedback.textContent = text;
-    feedback.classList.remove('hidden');
-    clearTimeout(showFeedback.t);
-    showFeedback.t = setTimeout(() => feedback.classList.add('hidden'), 800);
+    ctx.fillStyle = 'rgba(122,82,43,.18)'
+    ctx.fillRect(0, 602, WORLD.w, 118)
+    ctx.fillStyle = '#cf8847'
+    roundRect(130, 590, 1020, 54, 24); ctx.fill()
+    ctx.fillStyle = 'rgba(91,55,29,.22)'
+    for(let x = 165; x < 1120; x += 115) ctx.fillRect(x, 606, 54, 8)
+    drawRobot()
   }
 
-  function getAudio() {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    return audioCtx;
+  function drawRobot(){
+    if(assets.robot.ready){ ctx.drawImage(assets.robot, 920, 92, 210, 250); return }
+    ctx.save(); ctx.translate(1010, 155)
+    ctx.fillStyle = '#dde8ee'; roundRect(-55, 28, 130, 104, 24); ctx.fill()
+    ctx.fillStyle = '#f3fbff'; roundRect(-35, 46, 88, 42, 16); ctx.fill()
+    ctx.fillStyle = '#364756'; ctx.beginPath(); ctx.arc(-12, 68, 8, 0, TWO_PI); ctx.arc(30, 68, 8, 0, TWO_PI); ctx.fill()
+    ctx.strokeStyle = '#6e8796'; ctx.lineWidth = 8; ctx.beginPath(); ctx.moveTo(10, 28); ctx.lineTo(10, -6); ctx.stroke()
+    ctx.fillStyle = '#ffcb4e'; ctx.beginPath(); ctx.arc(10, -12, 12, 0, TWO_PI); ctx.fill()
+    ctx.fillStyle = '#91c3d2'; roundRect(-34, 132, 88, 80, 18); ctx.fill()
+    ctx.fillStyle = '#ffb34d'; ctx.beginPath(); ctx.arc(10, 172, 19, 0, TWO_PI); ctx.fill()
+    ctx.restore()
   }
 
-  function playTone(freq, dur = .08, type = 'sine') {
-    if (!soundOn) return;
-    const ac = getAudio();
-    const osc = ac.createOscillator();
-    const gain = ac.createGain();
-    osc.type = type;
-    osc.frequency.value = freq;
-    gain.gain.setValueAtTime(.001, ac.currentTime);
-    gain.gain.exponentialRampToValueAtTime(.09, ac.currentTime + .01);
-    gain.gain.exponentialRampToValueAtTime(.001, ac.currentTime + dur);
-    osc.connect(gain).connect(ac.destination);
-    osc.start();
-    osc.stop(ac.currentTime + dur + .02);
+  function roundRect(x, y, w, h, r){
+    ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath()
   }
 
-  function playSuccess() {
-    playTone(520, .07);
-    setTimeout(() => playTone(660, .08), 80);
+  function drawEffects(dt){
+    clickEffects.forEach(e => e.age += dt)
+    clickEffects = clickEffects.filter(e => e.age < .55)
+    clickEffects.forEach(e => {
+      const t = e.age / .55
+      ctx.save(); ctx.globalAlpha = 1 - t; ctx.strokeStyle = '#fff7a8'; ctx.lineWidth = 8 * (1 - t)
+      ctx.beginPath(); ctx.arc(e.x, e.y, 42 + t * 44, 0, TWO_PI); ctx.stroke(); ctx.restore()
+    })
   }
 
-  function playWrong() {
-    playTone(230, .10, 'triangle');
-    setTimeout(() => playTone(190, .10, 'triangle'), 100);
+  function render(dt){
+    drawBackground()
+    gears.forEach(drawGear)
+    drawEffects(dt)
   }
 
-  function lighten(hex, amount) { return mix(hex, '#ffffff', amount); }
-  function darken(hex, amount) { return mix(hex, '#000000', amount); }
-  function mix(a, b, amount) {
-    const ah = parseInt(a.replace('#',''), 16);
-    const ar = ah >> 16, ag = ah >> 8 & 255, ab = ah & 255;
-    const bh = parseInt(b.replace('#',''), 16);
-    const br = bh >> 16, bg = bh >> 8 & 255, bb = bh & 255;
-    const rr = Math.round(ar + (br - ar) * amount);
-    const rg = Math.round(ag + (bg - ag) * amount);
-    const rb = Math.round(ab + (bb - ab) * amount);
-    return `rgb(${rr},${rg},${rb})`;
+  function update(dt){
+    gears.forEach(g => {
+      if(!drag || drag.id !== g.id) g.angle += g.speed * dt
+      g.pulse = Math.max(0, g.pulse - dt * 2.8)
+    })
   }
 
-  document.getElementById('discoverBtn').addEventListener('click', setupDiscover);
-  document.getElementById('predictBtn').addEventListener('click', setupPredict);
-  document.getElementById('homeBtn').addEventListener('click', () => {
-    mode = 'menu';
-    gears = [];
-    titleSign.textContent = 'Tandwielen';
-    menu.classList.remove('hidden');
-    predictControls.classList.add('hidden');
-    discoverTray.classList.add('hidden');
-    feedback.classList.add('hidden');
-  });
-  document.getElementById('leftBtn').addEventListener('click', () => answer(-1));
-  document.getElementById('rightBtn').addEventListener('click', () => answer(1));
-  document.getElementById('addGearBtn').addEventListener('click', addGear);
-  document.getElementById('resetBtn').addEventListener('click', resetDiscover);
-  document.getElementById('newBtn').addEventListener('click', resetDiscover);
-  document.getElementById('showBtn').addEventListener('click', () => {
-    for (const g of gears) {
-      g.unknown = false;
-      g.connected = true;
-    }
-  });
-  document.getElementById('slowBtn').addEventListener('click', () => {
-    slowFactor = slowFactor === 1 ? .45 : 1;
-    document.getElementById('slowBtn').textContent = slowFactor === 1 ? 'Langzaam' : 'Normaal';
-  });
-  document.getElementById('teacherBtn').addEventListener('click', () => {
-    teacherMode = !teacherMode;
-    teacherPanel.classList.toggle('hidden', !teacherMode);
-  });
-  soundBtn.addEventListener('click', () => {
-    soundOn = !soundOn;
-    soundBtn.textContent = soundOn ? '🔈' : '🔇';
-  });
-  document.getElementById('fullBtn').addEventListener('click', () => {
-    if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
-    else document.exitFullscreen?.();
-  });
+  function loop(now){
+    const dt = Math.min(.05, (now - lastTime) / 1000)
+    lastTime = now
+    update(dt)
+    render(dt)
+    requestAnimationFrame(loop)
+  }
 
-  window.addEventListener('resize', () => {
-    resize();
-    if (mode === 'discover') setupDiscover();
-    if (mode === 'predict') setupPredict();
-  });
+  function resize(){
+    const dpr = Math.min(2, window.devicePixelRatio || 1)
+    canvas.width = WORLD.w * dpr
+    canvas.height = WORLD.h * dpr
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  }
 
-  resize();
-  requestAnimationFrame(loop);
-})();
+  function answer(dir){
+    if(mode !== 'choose') return
+    showFeedback(dir === chooseQuestion.answer ? '✓' : '↻')
+    setTimeout(resetChoose, 620)
+  }
+
+  function showFeedback(text){
+    feedback.textContent = text
+    feedback.classList.add('show')
+    clearTimeout(showFeedback.timer)
+    showFeedback.timer = setTimeout(() => feedback.classList.remove('show'), 420)
+  }
+
+  discoverBtn.addEventListener('click', () => setMode('discover'))
+  chooseBtn.addEventListener('click', () => setMode('choose'))
+  leftBtn.addEventListener('click', () => answer(-1))
+  rightBtn.addEventListener('click', () => answer(1))
+  canvas.addEventListener('pointerdown', onPointerDown)
+  canvas.addEventListener('pointermove', onPointerMove)
+  canvas.addEventListener('pointerup', onPointerUp)
+  canvas.addEventListener('pointercancel', onPointerUp)
+  window.addEventListener('resize', resize, { passive:true })
+
+  resize()
+  setMode('discover')
+  requestAnimationFrame(loop)
+})()

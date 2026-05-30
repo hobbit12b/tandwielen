@@ -1,57 +1,27 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="nl">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Tandwielwerkplaats</title>
-  <link rel="stylesheet" href="style.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>Tandwielenwerkplaats</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <main id="app" class="app">
-    <img class="background" src="assets/background-workshop.svg" alt="">
+  <main id="app" aria-label="Tandwielenwerkplaats">
+    <canvas id="gameCanvas" aria-label="Tandwielspel"></canvas>
 
-    <header class="topbar">
-      <button id="homeBtn" class="icon-btn" aria-label="menu">⌂</button>
-      <div id="titleSign" class="title-sign">Tandwielen</div>
-      <button id="teacherBtn" class="small-btn">Juf</button>
-      <button id="soundBtn" class="icon-btn" aria-label="geluid">🔈</button>
-      <button id="fullBtn" class="icon-btn" aria-label="volledig scherm">⛶</button>
-    </header>
+    <div class="topbar" aria-label="Spelkeuze">
+      <button id="discoverBtn" class="mode active" type="button">Ontdek</button>
+      <button id="chooseBtn" class="mode" type="button">Kies</button>
+    </div>
 
-    <section id="menu" class="menu">
-      <button id="discoverBtn" class="mode-card">
-        <span>⚙️</span>
-        <b>Ontdek</b>
-      </button>
-      <button id="predictBtn" class="mode-card">
-        <span>❔</span>
-        <b>Kies</b>
-      </button>
+    <section id="choosePanel" class="choose-panel" aria-label="Kies de draairichting" hidden>
+      <button id="leftBtn" class="answer" type="button" aria-label="Linksom"><span>↺</span></button>
+      <button id="rightBtn" class="answer" type="button" aria-label="Rechtsom"><span>↻</span></button>
     </section>
 
-    <canvas id="gearCanvas" class="gear-canvas" aria-label="tandwielveld"></canvas>
-
-    <img class="robot" src="assets/robot.svg" alt="robot">
-
-    <section id="predictControls" class="answer-zone hidden">
-      <button id="leftBtn" class="answer left" aria-label="linksom"><span>↺</span></button>
-      <button id="rightBtn" class="answer right" aria-label="rechtsom"><span>↻</span></button>
-    </section>
-
-    <section id="discoverTray" class="tray hidden">
-      <button id="addGearBtn" class="small-btn">+ ⚙️</button>
-      <button id="resetBtn" class="small-btn">↺</button>
-    </section>
-
-    <aside id="teacherPanel" class="teacher-panel hidden">
-      <button id="slowBtn">Langzaam</button>
-      <button id="showBtn">Toon</button>
-      <button id="newBtn">Nieuw</button>
-    </aside>
-
-    <div id="feedback" class="feedback hidden">Goed!</div>
+    <div id="feedback" class="feedback" aria-live="polite"></div>
   </main>
-
   <script src="game.js"></script>
 </body>
 </html>
