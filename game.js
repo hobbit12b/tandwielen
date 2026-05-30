@@ -16,9 +16,9 @@
   const TOOTH_DEPTH = 32
   const TOOTH_ADDENDUM = TOOTH_DEPTH * 0.40
   const TOOTH_DEDENDUM = TOOTH_DEPTH * 0.60
-  const MESH_TOOTH_OVERLAP = -3
+  const MESH_TOOTH_OVERLAP = -6
   const SNAP_TOLERANCE = 50
-  const LINK_DISTANCE_TOLERANCE = 12
+  const LINK_DISTANCE_TOLERANCE = 14
   const VISUAL_COLLISION_PADDING = 0
   const CONTACT_LINE_PADDING = 4
   const START_SPEED = 0.34
@@ -246,10 +246,25 @@
   function phaseGearForMesh(anchor, loose, meshAngle){
     const anchorPitch = TWO_PI / anchor.teeth
     const loosePitch = TWO_PI / loose.teeth
-    const anchorValley = Math.round((meshAngle - anchor.angle) / anchorPitch - .5) + .5
-    const looseTooth = Math.round((meshAngle + Math.PI - loose.angle) / loosePitch)
-    loose.angle = meshAngle + Math.PI - looseTooth * loosePitch
-    anchor.angle = meshAngle - anchorValley * anchorPitch
+    const anchorValleyIndex = Math.round((meshAngle - anchor.angle) / anchorPitch - .5)
+    const anchorValleyAngle = anchor.angle + (anchorValleyIndex + .5) * anchorPitch
+    const looseToothIndex = Math.round((anchorValleyAngle + Math.PI - loose.angle) / loosePitch)
+    loose.angle = anchorValleyAngle + Math.PI - looseToothIndex * loosePitch
+  }
+
+  function alignLinkedGearPhases(){
+    const queue = gears.filter(g => g.driver)
+    const seen = new Set(queue.map(g => g.id))
+    while(queue.length){
+      const gear = queue.shift()
+      connectedTo(gear.id).forEach(nextId => {
+        const next = getGear(nextId)
+        if(!next || seen.has(next.id)) return
+        phaseGearForMesh(gear, next, Math.atan2(next.y - gear.y, next.x - gear.x))
+        seen.add(next.id)
+        queue.push(next)
+      })
+    }
   }
 
   function wouldOverlapAnyGear(candidateGear, ignoredGearIds = []){
@@ -310,6 +325,7 @@
         if(isValidLink(fieldGears[i], fieldGears[j])) links.push({ a: fieldGears[i].id, b: fieldGears[j].id })
       }
     }
+    alignLinkedGearPhases()
     propagateRotation()
     checkSolveState()
   }
@@ -542,16 +558,6 @@
     ctx.shadowColor = 'rgba(63,57,37,.24)'
     ctx.shadowBlur = 18
     ctx.shadowOffsetY = 8
-    if(g.target && mode === 'solve' && assets.machineGear.ready){
-      const size = g.outerRadius * 2.08
-      ctx.rotate(g.angle)
-      ctx.drawImage(assets.machineGear, -size / 2, -size / 2, size, size)
-      ctx.rotate(-g.angle)
-      ctx.shadowColor = 'transparent'
-      drawHub(g, 1.05)
-      ctx.restore()
-      return
-    }
     const path = buildGearPath(g)
     const grad = ctx.createRadialGradient(-g.pitchRadius * .35, -g.pitchRadius * .45, 8, 0, 0, g.outerRadius)
     grad.addColorStop(0, '#ffffff')
@@ -754,6 +760,7 @@
     const target = getGear('target')
     const gearCenter = target || SOLVE_LEVEL_1.target
     const rackTravel = 116 * t
+    const rackWidth = 304
     const rackX = gearCenter.x + 47 + rackTravel
     const rackY = gearCenter.y - 27
     const doorX = 852
@@ -783,17 +790,14 @@
     ctx.restore()
 
     ctx.strokeStyle = '#58351f'; ctx.lineWidth = 8
-    ctx.beginPath(); ctx.moveTo(rackX + 208, rackY + 27); ctx.lineTo(doorX + doorW - 4, doorY + 66 - panelLift); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(rackX + rackWidth - 34, rackY + 27); ctx.lineTo(doorX + doorW - 4, doorY + 66 - panelLift); ctx.stroke()
     ctx.fillStyle = '#d9893d'; ctx.beginPath(); ctx.arc(doorX + doorW - 4, doorY + 66 - panelLift, 13, 0, TWO_PI); ctx.fill()
 
     ctx.save()
     ctx.translate(rackX, rackY)
-    if(assets.rack.ready) ctx.drawImage(assets.rack, 0, 0, 242, 22)
-    else { ctx.fillStyle = '#d5a04d'; roundRect(0, 3, 242, 17, 5); ctx.fill() }
+    if(assets.rack.ready) ctx.drawImage(assets.rack, 0, 0, rackWidth, 22)
+    else { ctx.fillStyle = '#d5a04d'; roundRect(0, 3, rackWidth, 17, 5); ctx.fill() }
     ctx.restore()
-
-    ctx.strokeStyle = 'rgba(255,246,207,.75)'; ctx.lineWidth = 4; ctx.setLineDash([10, 8])
-    ctx.beginPath(); ctx.moveTo(gearCenter.x + 38, gearCenter.y - 18); ctx.lineTo(rackX + 28, rackY + 11); ctx.stroke(); ctx.setLineDash([])
     ctx.restore()
   }
 
