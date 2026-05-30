@@ -16,6 +16,19 @@
   const MESH_TOOTH_OVERLAP = -3
   const SNAP_TOLERANCE = 50
   const START_SPEED = 0.34 // rustig ontdekspeelgoed, geen arcade-snelheid
+  const MAX_DISCOVER_GEARS = 10
+  const DISCOVER_GEAR_VARIANTS = [
+    { teeth: 10, color: '#4fb5e8', accent: '#d9f5ff' },
+    { teeth: 12, color: '#ffd34e', accent: '#fff3b0' },
+    { teeth: 14, color: '#f6a33b', accent: '#ffe6a7' },
+    { teeth: 16, color: '#8fd15a', accent: '#e5ffd0' },
+    { teeth: 18, color: '#8261d4', accent: '#e5dcff' },
+    { teeth: 22, color: '#ec6fae', accent: '#ffd8eb' }
+  ]
+  const DISCOVER_UI = {
+    add: { x: 1118, y: 142, size: 78 },
+    trash: { x: 1118, y: 590, size: 92 }
+  }
   const TWO_PI = Math.PI * 2
 
   const assets = loadImages({
@@ -37,6 +50,7 @@
   let chooseQuestion = null
   let hasDraggedDiscover = false
   let hintAlpha = 1
+  let nextDiscoverGearIndex = 0
 
   function loadImages(map){
     const out = {}
@@ -92,6 +106,7 @@
     clickEffects = []
     hasDraggedDiscover = false
     hintAlpha = 1
+    nextDiscoverGearIndex = 0
     propagateRotation()
   }
 
@@ -160,32 +175,36 @@
   }
 
   function disconnectGear(gear){
-    const driverIds = new Set(gears.filter(g => g.driver).map(g => g.id))
-    const cutIds = collectDependentGearIds(gear.id, driverIds)
-    links = links.filter(l => !cutIds.has(l.a) && !cutIds.has(l.b))
-    cutIds.forEach(id => {
-      const cutGear = getGear(id)
-      if(cutGear && !cutGear.driver) cutGear.speed = 0
-    })
+    if(!gear || gear.driver) return
+
+    // Knip alleen op het aangrijppunt van het opgepakte wiel. Eerst bepalen we
+    // welke buren zonder dit wiel nog bij het groene startwiel horen; die links
+    // zijn de ouder-links richting de draaiende startketting. Child-links worden
+    // ook netjes losgemaakt, zodat het opgepakte wiel vrij kan slepen zonder dat
+    // afhankelijke tandwielen op afstand logisch gekoppeld blijven.
+    const startSideIds = collectDriverSideIds(gear.id)
+    const hadParentLink = links.some(l => (l.a === gear.id && startSideIds.has(l.b)) || (l.b === gear.id && startSideIds.has(l.a)))
+
+    links = links.filter(l => l.a !== gear.id && l.b !== gear.id)
+    if(hadParentLink) gear.speed = 0
     propagateRotation()
   }
 
-  function collectDependentGearIds(rootId, driverIds){
-    const blocked = new Set(driverIds)
-    blocked.delete(rootId)
-    const dependent = new Set([rootId])
-    const queue = [rootId]
+  function collectDriverSideIds(blockedId){
+    const queue = gears.filter(g => g.driver && g.id !== blockedId).map(g => g.id)
+    const seen = new Set(queue)
     while(queue.length){
       const id = queue.shift()
       links.forEach(link => {
         const next = link.a === id ? link.b : link.b === id ? link.a : null
-        if(!next || dependent.has(next) || blocked.has(next)) return
-        dependent.add(next)
+        if(!next || next === blockedId || seen.has(next)) return
+        seen.add(next)
         queue.push(next)
       })
     }
-    return dependent
+    return seen
   }
+
 
   function toggleStartDirection(){
     const start = getGear('start')
@@ -232,17 +251,65 @@
     })
     if(!best) return false
 
+    removeLinksForGear(gear.id)
     const rawAngle = Math.atan2(gear.y - best.anchor.y, gear.x - best.anchor.x)
     const meshAngle = nearestValleyAngle(best.anchor, rawAngle)
     const wanted = meshDistance(best.anchor, gear)
     gear.x = best.anchor.x + Math.cos(meshAngle) * wanted
     gear.y = best.anchor.y + Math.sin(meshAngle) * wanted
     phaseGearForMesh(best.anchor, gear, meshAngle)
-    links = links.filter(l => l.a !== gear.id && l.b !== gear.id)
     links.push({ a: best.anchor.id, b: gear.id })
     propagateRotation()
     popClick(gear.x, gear.y, gear)
     return true
+  }
+
+  function removeLinksForGear(id){
+    links = links.filter(l => l.a !== id && l.b !== id)
+  }
+
+  function removeGear(gear){
+    if(!gear || gear.driver) return false
+    gears = gears.filter(g => g.id !== gear.id)
+    removeLinksForGear(gear.id)
+    propagateRotation()
+    return true
+  }
+
+  function addDiscoverGear(){
+    if(mode !== 'discover' || gears.length >= MAX_DISCOVER_GEARS) return false
+    const variant = DISCOVER_GEAR_VARIANTS[nextDiscoverGearIndex % DISCOVER_GEAR_VARIANTS.length]
+    nextDiscoverGearIndex += 1
+    const radii = gearRadii(variant.teeth)
+    const columns = [930, 815, 700]
+    const rows = [150, 305, 460]
+    let best = null
+    columns.forEach(x => rows.forEach(y => {
+      const clear = gears.every(g => Math.hypot(g.x - x, g.y - y) > g.outerRadius + radii.outerRadius + 28)
+      const nearest = gears.reduce((min, g) => Math.min(min, Math.hypot(g.x - x, g.y - y)), Infinity)
+      if((clear || !best) && (!best || (clear && !best.clear) || nearest > best.nearest)) best = { x, y, clear, nearest }
+    }))
+    if(!best) best = { x: 940, y: 180 }
+    const gear = makeGear(`extra-${Date.now()}-${nextDiscoverGearIndex}`, best.x, best.y, variant.teeth, variant.color, {
+      accent: variant.accent,
+      angle: nextDiscoverGearIndex * .35
+    })
+    gears.push(gear)
+    popClick(gear.x, gear.y, gear)
+    return true
+  }
+
+  function hitDiscoverButton(p){
+    if(mode !== 'discover') return null
+    const add = DISCOVER_UI.add
+    if(Math.abs(p.x - add.x) <= add.size / 2 && Math.abs(p.y - add.y) <= add.size / 2) return 'add'
+    return null
+  }
+
+  function overTrash(p){
+    if(mode !== 'discover') return false
+    const trash = DISCOVER_UI.trash
+    return Math.abs(p.x - trash.x) <= trash.size / 2 && Math.abs(p.y - trash.y) <= trash.size / 2
   }
 
   function popClick(x, y, gear){
@@ -268,6 +335,11 @@
 
   function onPointerDown(evt){
     const p = pointerToWorld(evt)
+    const button = hitDiscoverButton(p)
+    if(button === 'add'){
+      addDiscoverGear()
+      return
+    }
     const gear = gearAt(p)
     if(mode === 'discover' && gear?.id === 'start'){
       toggleStartDirection()
@@ -285,19 +357,22 @@
     const p = pointerToWorld(evt)
     if(!drag){
       const gear = gearAt(p)
-      canvas.style.cursor = mode === 'discover' && gear && !gear.fixed ? 'grab' : mode === 'discover' && gear?.id === 'start' ? 'pointer' : 'default'
+      const button = hitDiscoverButton(p)
+      canvas.style.cursor = button || (mode === 'discover' && gear?.id === 'start') ? 'pointer' : mode === 'discover' && gear && !gear.fixed ? 'grab' : 'default'
       return
     }
     const gear = getGear(drag.id)
     gear.x = clamp(p.x - drag.dx, gear.outerRadius + 18, WORLD.w - gear.outerRadius - 18)
     gear.y = clamp(p.y - drag.dy, 126 + gear.outerRadius, WORLD.h - gear.outerRadius - 18)
-    if(Math.hypot(p.x - drag.startX, p.y - drag.startY) > 90 && trySnap(gear)) drag = null
+    if(!overTrash(p) && Math.hypot(p.x - drag.startX, p.y - drag.startY) > 90 && trySnap(gear)) drag = null
   }
 
   function onPointerUp(evt){
     if(!drag || drag.pointerId !== evt.pointerId) return
+    const p = pointerToWorld(evt)
     const gear = getGear(drag.id)
-    trySnap(gear)
+    if(overTrash(p)) removeGear(gear)
+    else trySnap(gear)
     drag = null
   }
 
@@ -549,6 +624,46 @@
     ctx.restore()
   }
 
+  function drawDiscoverControls(){
+    if(mode !== 'discover') return
+    drawAddButton()
+    drawTrashZone()
+  }
+
+  function drawAddButton(){
+    const add = DISCOVER_UI.add
+    const disabled = gears.length >= MAX_DISCOVER_GEARS
+    ctx.save()
+    ctx.globalAlpha = disabled ? .48 : 1
+    ctx.fillStyle = disabled ? 'rgba(210,196,171,.92)' : 'rgba(255,246,207,.95)'
+    ctx.strokeStyle = disabled ? 'rgba(112,71,28,.14)' : 'rgba(112,71,28,.24)'
+    ctx.lineWidth = 5
+    roundRect(add.x - add.size / 2, add.y - add.size / 2, add.size, add.size, 24)
+    ctx.fill(); ctx.stroke()
+    ctx.fillStyle = disabled ? '#9d8b72' : '#3f9f47'
+    ctx.font = '1000 56px ui-rounded, system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('+', add.x, add.y - 3)
+    ctx.restore()
+  }
+
+  function drawTrashZone(){
+    const trash = DISCOVER_UI.trash
+    const active = drag && overTrash({ x: getGear(drag.id)?.x || -999, y: getGear(drag.id)?.y || -999 })
+    ctx.save()
+    ctx.fillStyle = active ? 'rgba(255,225,215,.96)' : 'rgba(255,246,207,.88)'
+    ctx.strokeStyle = active ? 'rgba(214,81,56,.72)' : 'rgba(112,71,28,.20)'
+    ctx.lineWidth = active ? 7 : 5
+    roundRect(trash.x - trash.size / 2, trash.y - trash.size / 2, trash.size, trash.size, 28)
+    ctx.fill(); ctx.stroke()
+    ctx.font = '54px ui-rounded, system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('🗑️', trash.x, trash.y + 1)
+    ctx.restore()
+  }
+
   function drawEffects(dt){
     clickEffects.forEach(e => e.age += dt)
     clickEffects = clickEffects.filter(e => e.age < .55)
@@ -562,6 +677,7 @@
   function render(dt){
     drawBackground()
     gears.forEach(drawGear)
+    drawDiscoverControls()
     drawDragHint()
     drawEffects(dt)
   }
