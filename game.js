@@ -15,7 +15,6 @@
   const TOOTH_DEDENDUM = TOOTH_DEPTH * 0.60
   const MESH_TOOTH_OVERLAP = 1.5
   const SNAP_TOLERANCE = 50
-  const DIRECTION_BUTTON_RADIUS = 42
   const START_SPEED = 0.34 // rustig ontdekspeelgoed, geen arcade-snelheid
   const TWO_PI = Math.PI * 2
 
@@ -152,17 +151,6 @@
     propagateRotation()
   }
 
-  function directionButton(){
-    const start = getGear('start')
-    if(!start || mode !== 'discover') return null
-    return { x: start.x + start.outerRadius * .78, y: start.y - start.outerRadius * .78, r: DIRECTION_BUTTON_RADIUS }
-  }
-
-  function pointInDirectionButton(p){
-    const button = directionButton()
-    return button && Math.hypot(p.x - button.x, p.y - button.y) <= button.r + 8
-  }
-
   function toggleStartDirection(){
     const start = getGear('start')
     if(!start) return
@@ -245,11 +233,11 @@
 
   function onPointerDown(evt){
     const p = pointerToWorld(evt)
-    if(mode === 'discover' && pointInDirectionButton(p)){
+    const gear = gearAt(p)
+    if(mode === 'discover' && gear?.id === 'start'){
       toggleStartDirection()
       return
     }
-    const gear = gearAt(p)
     if(!gear || gear.fixed || mode !== 'discover') return
     hasDraggedDiscover = true
     canvas.setPointerCapture(evt.pointerId)
@@ -259,9 +247,13 @@
   }
 
   function onPointerMove(evt){
-    if(!drag) return
-    const gear = getGear(drag.id)
     const p = pointerToWorld(evt)
+    if(!drag){
+      const gear = gearAt(p)
+      canvas.style.cursor = mode === 'discover' && gear?.id === 'start' ? 'pointer' : 'default'
+      return
+    }
+    const gear = getGear(drag.id)
     gear.x = clamp(p.x - drag.dx, gear.outerRadius + 18, WORLD.w - gear.outerRadius - 18)
     gear.y = clamp(p.y - drag.dy, 126 + gear.outerRadius, WORLD.h - gear.outerRadius - 18)
     if(trySnap(gear)) drag = null
@@ -372,6 +364,51 @@
     ctx.beginPath(); ctx.arc(0, 0, g.boreRadius, 0, TWO_PI); ctx.fill()
     ctx.fillStyle = 'rgba(255,255,255,.58)'
     ctx.beginPath(); ctx.ellipse(-g.pitchRadius * .25, -g.pitchRadius * .36, g.pitchRadius * .22, 9, -.45, 0, TWO_PI); ctx.fill()
+    if(g.id === 'start') drawStartDirectionArrow(g)
+    ctx.restore()
+  }
+
+  function drawStartDirectionArrow(g){
+    const clockwise = g.speed > 0
+    const pulse = mode === 'discover' ? .5 + Math.sin(performance.now() / 360) * .5 : 0
+    const arrowRadius = Math.max(g.boreRadius + 23, g.pitchRadius * .58)
+    const startAngle = g.angle - Math.PI * .72
+    const endAngle = g.angle + Math.PI * .86
+    const from = clockwise ? startAngle : endAngle
+    const to = clockwise ? endAngle : startAngle
+
+    if(mode === 'discover'){
+      ctx.save()
+      ctx.globalAlpha = .16 + pulse * .10
+      ctx.strokeStyle = '#fff7a8'
+      ctx.lineWidth = 13
+      ctx.beginPath(); ctx.arc(0, 0, g.outerRadius + 6 + pulse * 5, 0, TWO_PI); ctx.stroke()
+      ctx.restore()
+    }
+
+    ctx.save()
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.shadowColor = 'rgba(47,92,45,.30)'
+    ctx.shadowBlur = 5
+    ctx.lineWidth = 14
+    ctx.strokeStyle = 'rgba(47,92,45,.22)'
+    ctx.beginPath(); ctx.arc(0, 0, arrowRadius, from, to, !clockwise); ctx.stroke()
+    ctx.shadowColor = 'transparent'
+    ctx.lineWidth = 10
+    ctx.strokeStyle = 'rgba(255,255,255,.96)'
+    ctx.beginPath(); ctx.arc(0, 0, arrowRadius, from, to, !clockwise); ctx.stroke()
+
+    const headAngle = to
+    const dir = clockwise ? 1 : -1
+    const tip = pointOnGear(headAngle, arrowRadius)
+    const wingBack = pointOnGear(headAngle - dir * .28, arrowRadius - 1)
+    const wingOuter = pointOnGear(headAngle - dir * .08, arrowRadius + 24)
+    const wingInner = pointOnGear(headAngle - dir * .08, arrowRadius - 24)
+    ctx.fillStyle = 'rgba(47,92,45,.22)'
+    ctx.beginPath(); ctx.moveTo(tip.x + 2, tip.y + 3); ctx.lineTo(wingOuter.x + 2, wingOuter.y + 3); ctx.lineTo(wingBack.x + 2, wingBack.y + 3); ctx.lineTo(wingInner.x + 2, wingInner.y + 3); ctx.closePath(); ctx.fill()
+    ctx.fillStyle = 'rgba(255,255,255,.98)'
+    ctx.beginPath(); ctx.moveTo(tip.x, tip.y); ctx.lineTo(wingOuter.x, wingOuter.y); ctx.lineTo(wingBack.x, wingBack.y); ctx.lineTo(wingInner.x, wingInner.y); ctx.closePath(); ctx.fill()
     ctx.restore()
   }
 
@@ -415,29 +452,6 @@
 
   function roundRect(x, y, w, h, r){
     ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath()
-  }
-
-  function drawDirectionButton(){
-    const button = directionButton()
-    const start = getGear('start')
-    if(!button || !start) return
-    ctx.save()
-    ctx.translate(button.x, button.y)
-    ctx.fillStyle = 'rgba(255,246,207,.96)'
-    ctx.shadowColor = 'rgba(83,67,34,.24)'
-    ctx.shadowBlur = 18
-    ctx.shadowOffsetY = 8
-    ctx.beginPath(); ctx.arc(0, 0, button.r, 0, TWO_PI); ctx.fill()
-    ctx.shadowColor = 'transparent'
-    ctx.lineWidth = 5
-    ctx.strokeStyle = '#d98226'
-    ctx.stroke()
-    ctx.fillStyle = start.speed < 0 ? '#2d93da' : '#7655ce'
-    ctx.font = '900 48px ui-rounded, system-ui, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText(start.speed < 0 ? '↺' : '↻', 0, -3)
-    ctx.restore()
   }
 
   function drawDragHint(){
@@ -491,7 +505,6 @@
   function render(dt){
     drawBackground()
     gears.forEach(drawGear)
-    drawDirectionButton()
     drawDragHint()
     drawEffects(dt)
   }
