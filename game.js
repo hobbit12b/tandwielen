@@ -15,6 +15,9 @@
   const TOOTH_DEDENDUM = TOOTH_DEPTH * 0.60
   const MESH_TOOTH_OVERLAP = -3
   const SNAP_TOLERANCE = 50
+  const LINK_DISTANCE_TOLERANCE = 12
+  const VISUAL_COLLISION_PADDING = 0
+  const CONTACT_LINE_PADDING = 4
   const START_SPEED = 0.34 // rustig ontdekspeelgoed, geen arcade-snelheid
   const MAX_DISCOVER_GEARS = 10
   const DISCOVER_GEAR_VARIANTS = [
@@ -67,6 +70,7 @@
   function clamp(v, min, max){ return Math.max(min, Math.min(max, v)) }
   function normAngle(a){ return Math.atan2(Math.sin(a), Math.cos(a)) }
   function dist(a, b){ return Math.hypot(a.x - b.x, a.y - b.y) }
+  function visualCollisionRadius(gear){ return gear.pitchRadius + VISUAL_COLLISION_PADDING }
 
   function gearRadii(teeth){
     // Alle tandwielen gebruiken dezelfde tandsteek. Daardoor groeit de pitch-radius
@@ -239,29 +243,96 @@
     anchor.angle = meshAngle - anchorValley * anchorPitch
   }
 
+  function wouldOverlapAnyGear(candidateGear, ignoredGearIds = []){
+    const ignored = new Set(ignoredGearIds)
+    return gears.some(other => {
+      if(other.id === candidateGear.id || ignored.has(other.id)) return false
+      const minDistance = visualCollisionRadius(candidateGear) + visualCollisionRadius(other)
+      return dist(candidateGear, other) < minDistance
+    })
+  }
+
+  function distanceToSegment(p, a, b){
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const lenSq = dx * dx + dy * dy
+    if(lenSq === 0) return { distance: dist(p, a), t: 0 }
+    const t = clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq, 0, 1)
+    const x = a.x + dx * t
+    const y = a.y + dy * t
+    return { distance: Math.hypot(p.x - x, p.y - y), t }
+  }
+
+  function isContactBlocked(anchor, loose){
+    const endpointClearance = Math.min(anchor.pitchRadius, loose.pitchRadius) * .45
+    const contactDistance = dist(anchor, loose)
+    return gears.some(other => {
+      if(other.id === anchor.id || other.id === loose.id) return false
+      const hit = distanceToSegment(other, anchor, loose)
+      const distanceFromAnchor = hit.t * contactDistance
+      const distanceFromLoose = (1 - hit.t) * contactDistance
+      if(distanceFromAnchor < endpointClearance || distanceFromLoose < endpointClearance) return false
+      return hit.distance < visualCollisionRadius(other) + CONTACT_LINE_PADDING
+    })
+  }
+
+  function isValidLink(anchor, loose){
+    const wanted = meshDistance(anchor, loose)
+    if(Math.abs(dist(anchor, loose) - wanted) > LINK_DISTANCE_TOLERANCE) return false
+    if(isContactBlocked(anchor, loose)) return false
+    if(wouldOverlapAnyGear(anchor, [loose.id]) || wouldOverlapAnyGear(loose, [anchor.id])) return false
+    return true
+  }
+
+  function validateLinks(){
+    const before = links.length
+    links = links.filter(link => {
+      const a = getGear(link.a)
+      const b = getGear(link.b)
+      return a && b && isValidLink(a, b)
+    })
+    if(links.length !== before) propagateRotation()
+  }
+
   function trySnap(gear){
     if(mode !== 'discover') return false
-    const anchors = gears.filter(g => g.id !== gear.id && Math.abs(g.speed) > 0.001)
-    let best = null
-    anchors.forEach(anchor => {
-      const wanted = meshDistance(anchor, gear)
-      const d = dist(anchor, gear)
-      const error = Math.abs(d - wanted)
-      if(error < SNAP_TOLERANCE && (!best || error < best.error)) best = { anchor, error, d }
-    })
-    if(!best) return false
+    validateLinks()
+    const candidates = gears
+      .filter(g => g.id !== gear.id && Math.abs(g.speed) > 0.001)
+      .map(anchor => {
+        const wanted = meshDistance(anchor, gear)
+        const d = dist(anchor, gear)
+        const error = Math.abs(d - wanted)
+        return { anchor, error, d }
+      })
+      .filter(candidate => candidate.error < SNAP_TOLERANCE)
+      .sort((a, b) => a.error - b.error)
 
-    removeLinksForGear(gear.id)
-    const rawAngle = Math.atan2(gear.y - best.anchor.y, gear.x - best.anchor.x)
-    const meshAngle = nearestValleyAngle(best.anchor, rawAngle)
-    const wanted = meshDistance(best.anchor, gear)
-    gear.x = best.anchor.x + Math.cos(meshAngle) * wanted
-    gear.y = best.anchor.y + Math.sin(meshAngle) * wanted
-    phaseGearForMesh(best.anchor, gear, meshAngle)
-    links.push({ a: best.anchor.id, b: gear.id })
-    propagateRotation()
-    popClick(gear.x, gear.y, gear)
-    return true
+    for(const candidate of candidates){
+      const rawAngle = Math.atan2(gear.y - candidate.anchor.y, gear.x - candidate.anchor.x)
+      const meshAngle = nearestValleyAngle(candidate.anchor, rawAngle)
+      const wanted = meshDistance(candidate.anchor, gear)
+      const snappedGear = {
+        ...gear,
+        x: candidate.anchor.x + Math.cos(meshAngle) * wanted,
+        y: candidate.anchor.y + Math.sin(meshAngle) * wanted
+      }
+
+      if(wouldOverlapAnyGear(snappedGear, [candidate.anchor.id])) continue
+      if(isContactBlocked(candidate.anchor, snappedGear)) continue
+
+      removeLinksForGear(gear.id)
+      gear.x = snappedGear.x
+      gear.y = snappedGear.y
+      phaseGearForMesh(candidate.anchor, gear, meshAngle)
+      links.push({ a: candidate.anchor.id, b: gear.id })
+      validateLinks()
+      propagateRotation()
+      popClick(gear.x, gear.y, gear)
+      return true
+    }
+
+    return false
   }
 
   function removeLinksForGear(id){
@@ -272,6 +343,7 @@
     if(!gear || gear.driver) return false
     gears = gears.filter(g => g.id !== gear.id)
     removeLinksForGear(gear.id)
+    validateLinks()
     propagateRotation()
     return true
   }
