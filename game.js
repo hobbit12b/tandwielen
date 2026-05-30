@@ -40,7 +40,7 @@
   const SOLVE_LEVEL_1 = {
     name: 'Deur',
     machine: 'door',
-    target: { x: 612, y: 360, teeth: 12 },
+    target: { x: 620, y: 382, teeth: 12 },
     stock: [
       { teeth: 12, color: '#4fb5e8', accent: '#d9f5ff' }
     ]
@@ -69,6 +69,7 @@
   let levelComplete = false
   let machineProgress = 0
   let doorProgress = 0
+  const LEVEL_1_RACK_TRAVEL = 128
 
   function loadImages(map){
     const out = {}
@@ -592,8 +593,9 @@
 
   function drawHub(g, scale = 1){
     if(!assets.axleHub.ready) return
-    const width = Math.max(44, g.boreRadius * 2.1) * scale
-    const height = width * assets.axleHub.height / assets.axleHub.width
+    const aspect = assets.axleHub.width / assets.axleHub.height
+    const width = Math.max(54, g.boreRadius * 2.45) * scale
+    const height = aspect > 4 ? Math.max(22, width / 4.4) : width * assets.axleHub.height / assets.axleHub.width
     ctx.drawImage(assets.axleHub, -width / 2, -height / 2, width, height)
   }
 
@@ -759,46 +761,90 @@
   function drawDoorMachine(t){
     const target = getGear('target')
     const gearCenter = target || SOLVE_LEVEL_1.target
-    const rackTravel = 116 * t
-    const rackWidth = 304
-    const rackX = gearCenter.x + 47 + rackTravel
-    const rackY = gearCenter.y - 27
-    const doorX = 852
-    const doorY = 184
-    const doorW = 238
-    const doorH = 336
+    const rackTravel = LEVEL_1_RACK_TRAVEL * t
+    const rackWidth = 390
+    const rackH = 34
+    const rackX = gearCenter.x - 165 + rackTravel
+    const rackY = gearCenter.y - (target?.outerRadius || gearRadii(SOLVE_LEVEL_1.target.teeth).outerRadius) - rackH + 8
+    const rackRight = rackX + rackWidth
+    const doorX = 815
+    const doorY = 236
+    const doorW = 280
+    const doorH = 306
+    const panelW = 238
+    const panelH = 272
+    const panelX = doorX + 16 + rackTravel
+    const panelY = doorY + 21
+    const pocketX = doorX + doorW + 8
 
     ctx.save()
+
+    // Door frame and receiver pocket: the panel remains visible and slides into this rail.
     ctx.fillStyle = 'rgba(89,56,35,.22)'
-    roundRect(842, 142, 330, 432, 26); ctx.fill()
+    roundRect(doorX - 18, doorY - 46, 380, doorH + 92, 26); ctx.fill()
     ctx.fillStyle = '#6e4628'
-    roundRect(862, 166, 292, 384, 18); ctx.fill()
+    roundRect(doorX - 2, doorY - 16, doorW + 22, doorH + 32, 18); ctx.fill()
     ctx.fillStyle = '#2e2118'
-    roundRect(doorX + 18, doorY + 22, doorW - 36, doorH - 38, 12); ctx.fill()
-    ctx.fillStyle = 'rgba(142,216,234,.55)'
-    roundRect(doorX + 35, doorY + 44, doorW - 70, doorH - 85, 10); ctx.fill()
+    roundRect(doorX + 16, doorY + 16, doorW - 28, doorH - 22, 12); ctx.fill()
+    ctx.fillStyle = 'rgba(142,216,234,.48)'
+    roundRect(doorX + 36, doorY + 38, doorW - 70, doorH - 64, 10); ctx.fill()
+
+    // Rails make the horizontal sliding direction explicit.
+    ctx.fillStyle = '#51331e'
+    roundRect(doorX + 4, doorY - 31, doorW + 94, 18, 9); ctx.fill()
+    roundRect(doorX + 4, doorY + doorH + 13, doorW + 94, 16, 8); ctx.fill()
+    ctx.fillStyle = '#d5a04d'
+    roundRect(doorX + 18, doorY - 26, doorW + 66, 8, 4); ctx.fill()
+    roundRect(doorX + 18, doorY + doorH + 17, doorW + 66, 7, 4); ctx.fill()
+
+    // One rigid connection: the rack end is bolted to the top of the sliding panel.
+    ctx.fillStyle = '#9aa9ad'
+    roundRect(panelX + 3, rackY + 8, 24, panelY - rackY + 15, 8); ctx.fill()
+    ctx.fillStyle = '#eef6f7'
+    ctx.beginPath(); ctx.arc(panelX + 15, rackY + 18, 4, 0, TWO_PI); ctx.arc(panelX + 15, panelY + 7, 4, 0, TWO_PI); ctx.fill()
 
     ctx.save()
-    ctx.beginPath(); roundRect(doorX, doorY, doorW, doorH, 16); ctx.clip()
-    const panelLift = 242 * t
-    if(!drawImageContained(assets.closedShutter, doorX, doorY - panelLift, doorW, doorH)){
-      const slatH = 24
-      ctx.fillStyle = '#b7c7cb'; roundRect(doorX, doorY - panelLift, doorW, doorH, 16); ctx.fill()
-      ctx.strokeStyle = '#8ca5ad'; ctx.lineWidth = 3
-      for(let y = doorY + slatH - panelLift; y < doorY + doorH; y += slatH){ ctx.beginPath(); ctx.moveTo(doorX + 8, y); ctx.lineTo(doorX + doorW - 8, y); ctx.stroke() }
+    ctx.translate(panelX, panelY)
+    if(!drawImageContained(assets.closedDoor, 0, 0, panelW, panelH)){
+      ctx.fillStyle = '#b7c7cb'; roundRect(0, 0, panelW, panelH, 14); ctx.fill()
+      ctx.strokeStyle = '#8ca5ad'; ctx.lineWidth = 4
+      for(let x = 28; x < panelW - 20; x += 44){ ctx.beginPath(); ctx.moveTo(x, 12); ctx.lineTo(x, panelH - 12); ctx.stroke() }
     }
     ctx.restore()
 
-    ctx.strokeStyle = '#58351f'; ctx.lineWidth = 8
-    ctx.beginPath(); ctx.moveTo(rackX + rackWidth - 34, rackY + 27); ctx.lineTo(doorX + doorW - 4, doorY + 66 - panelLift); ctx.stroke()
-    ctx.fillStyle = '#d9893d'; ctx.beginPath(); ctx.arc(doorX + doorW - 4, doorY + 66 - panelLift, 13, 0, TWO_PI); ctx.fill()
+    // Receiver pocket is drawn over the far edge so hiding is explained by a physical housing.
+    ctx.fillStyle = '#5f3b23'
+    roundRect(pocketX, doorY - 19, 84, doorH + 38, 14); ctx.fill()
+    ctx.fillStyle = 'rgba(39,27,20,.45)'
+    roundRect(pocketX + 12, doorY + 6, 58, doorH - 12, 10); ctx.fill()
+    ctx.fillStyle = 'rgba(255,246,207,.18)'
+    roundRect(pocketX + 8, doorY - 12, 12, doorH + 24, 6); ctx.fill()
 
+    // Rack teeth are flipped downward and kept at a fixed mesh height above the target gear.
     ctx.save()
     ctx.translate(rackX, rackY)
-    if(assets.rack.ready) ctx.drawImage(assets.rack, 0, 0, rackWidth, 22)
-    else { ctx.fillStyle = '#d5a04d'; roundRect(0, 3, rackWidth, 17, 5); ctx.fill() }
+    if(assets.rack.ready){
+      ctx.save(); ctx.translate(0, rackH); ctx.scale(1, -1); ctx.drawImage(assets.rack, 0, 0, rackWidth, rackH); ctx.restore()
+    } else drawFallbackRack(rackWidth, rackH)
     ctx.restore()
+
+    // A small clamp at the rack end reinforces that the rack and door panel are one assembly.
+    ctx.fillStyle = '#7d8b90'
+    roundRect(rackRight - 32, rackY + 5, 42, rackH - 4, 7); ctx.fill()
+    ctx.fillStyle = '#eef6f7'
+    ctx.beginPath(); ctx.arc(rackRight - 20, rackY + 17, 4, 0, TWO_PI); ctx.arc(rackRight - 5, rackY + 17, 4, 0, TWO_PI); ctx.fill()
+
     ctx.restore()
+  }
+
+  function drawFallbackRack(width, height){
+    ctx.fillStyle = '#d5a04d'
+    roundRect(0, 0, width, 18, 5); ctx.fill()
+    ctx.fillStyle = '#b7792c'
+    const pitch = 24
+    for(let x = 0; x < width; x += pitch){
+      ctx.beginPath(); ctx.moveTo(x + 2, 18); ctx.lineTo(x + pitch * .5, height); ctx.lineTo(x + pitch - 2, 18); ctx.closePath(); ctx.fill()
+    }
   }
 
   function drawLampMachine(t){
@@ -835,16 +881,28 @@
 
   function render(dt){
     drawBackground()
-    drawSolveStage()
-    gears.forEach(drawGear)
+    if(mode === 'solve'){
+      drawStockTray()
+      gears.forEach(drawGear)
+      drawMachine()
+    } else {
+      drawSolveStage()
+      gears.forEach(drawGear)
+    }
     drawDiscoverControls()
     drawDragHint()
     drawEffects(dt)
   }
 
   function updateSolveMachine(dt){
-    const moving = mode === 'solve' && isTargetGearPowered()
-    doorProgress = clamp(doorProgress + (moving ? dt * .72 : -dt * .95), 0, 1)
+    const target = getGear('target')
+    const moving = mode === 'solve' && target && Math.abs(target.speed) > 0.001
+    if(moving){
+      const linearRackSpeed = target.speed * target.pitchRadius
+      doorProgress = clamp(doorProgress + linearRackSpeed * dt / LEVEL_1_RACK_TRAVEL, 0, 1)
+    } else {
+      doorProgress = clamp(doorProgress - dt * .55, 0, 1)
+    }
     machineProgress = doorProgress
   }
 
