@@ -58,8 +58,8 @@
     rackH: 43,
     level1RackMeshOffset: 0,
     brackets: [
-      { x: 748, y: 100, w: 34, h: 68 },
-      { x: 1002, y: 100, w: 34, h: 68 }
+      { x: 748, y: 170, w: 34, h: 68 },
+      { x: 1002, y: 170, w: 34, h: 68 }
     ],
     frameOverlay: { x: 748, y: 88, w: 292, h: 492, openingX: 806, openingY: 138, openingW: 202, openingH: 430 }
   }
@@ -484,7 +484,7 @@
     hasDraggedDiscover = mode === 'discover' ? true : hasDraggedDiscover
     canvas.setPointerCapture(evt.pointerId)
     disconnectGear(gear)
-    drag = { id: gear.id, dx: p.x - gear.x, dy: p.y - gear.y, pointerId: evt.pointerId, startX: p.x, startY: p.y }
+    drag = { id: gear.id, dx: p.x - gear.x, dy: p.y - gear.y, pointerId: evt.pointerId, startX: p.x, startY: p.y, moved: false }
     gears = gears.filter(g => g.id !== gear.id).concat(gear)
   }
 
@@ -501,7 +501,9 @@
     gear.stock = false
     gear.x = clamp(p.x - drag.dx, gear.outerRadius + 18, WORLD.w - gear.outerRadius - 18)
     gear.y = clamp(p.y - drag.dy, 108 + gear.outerRadius, WORLD.h - gear.outerRadius - 18)
-    if(mode === 'discover' && !overTrash(p) && Math.hypot(p.x - drag.startX, p.y - drag.startY) > 90 && trySnap(gear)) drag = null
+    const movedDistance = Math.hypot(p.x - drag.startX, p.y - drag.startY)
+    if(movedDistance > 8) drag.moved = true
+    if(mode === 'discover' && !overTrash(p) && movedDistance > 90 && trySnap(gear)) drag = null
   }
 
   function onPointerUp(evt){
@@ -509,6 +511,7 @@
     const p = pointerToWorld(evt)
     const gear = getGear(drag.id)
     if(mode === 'discover' && overTrash(p)) removeGear(gear)
+    else if(mode === 'solve' && !drag.moved) checkSolveState()
     else if(!trySnap(gear) && mode === 'solve') rebuildSolveLinks()
     drag = null
   }
@@ -574,30 +577,81 @@
     ctx.translate(g.x, g.y)
     const scale = 1 + g.pulse * .035
     ctx.scale(scale, scale)
-    if(g.stock) ctx.globalAlpha = .92
-    ctx.shadowColor = 'rgba(63,57,37,.24)'
-    ctx.shadowBlur = 18
-    ctx.shadowOffsetY = 8
+    if(g.stock) ctx.globalAlpha = .94
+
     const path = buildGearPath(g)
-    const grad = ctx.createRadialGradient(-g.pitchRadius * .35, -g.pitchRadius * .45, 8, 0, 0, g.outerRadius)
+    ctx.shadowColor = 'rgba(63,57,37,.25)'
+    ctx.shadowBlur = 20
+    ctx.shadowOffsetY = 8
+
+    const grad = ctx.createRadialGradient(-g.pitchRadius * .36, -g.pitchRadius * .42, 5, 0, 0, g.outerRadius)
     grad.addColorStop(0, '#ffffff')
-    grad.addColorStop(.18, g.accent)
-    grad.addColorStop(.52, g.color)
-    grad.addColorStop(1, shade(g.color, -28))
+    grad.addColorStop(.16, g.accent)
+    grad.addColorStop(.48, g.color)
+    grad.addColorStop(.78, shade(g.color, -14))
+    grad.addColorStop(1, shade(g.color, -34))
     ctx.fillStyle = grad
     ctx.fill(path)
+
     ctx.shadowColor = 'transparent'
-    ctx.lineWidth = 4
-    ctx.strokeStyle = 'rgba(89,62,36,.22)'
+    ctx.save()
+    ctx.clip(path)
+
+    const gloss = ctx.createLinearGradient(-g.outerRadius, -g.outerRadius, g.outerRadius, g.outerRadius)
+    gloss.addColorStop(0, 'rgba(255,255,255,.34)')
+    gloss.addColorStop(.36, 'rgba(255,255,255,.12)')
+    gloss.addColorStop(.62, 'rgba(255,255,255,0)')
+    gloss.addColorStop(1, 'rgba(80,45,30,.16)')
+    ctx.fillStyle = gloss
+    ctx.fillRect(-g.outerRadius, -g.outerRadius, g.outerRadius * 2, g.outerRadius * 2)
+
+    ctx.strokeStyle = 'rgba(255,255,255,.42)'
+    ctx.lineWidth = 7
+    ctx.beginPath(); ctx.arc(0, 0, g.outerRadius - 4, Math.PI * 1.05, Math.PI * 1.92); ctx.stroke()
+    ctx.strokeStyle = 'rgba(69,43,27,.14)'
+    ctx.lineWidth = 8
+    ctx.beginPath(); ctx.arc(0, 0, g.outerRadius - 6, Math.PI * .06, Math.PI * .82); ctx.stroke()
+    ctx.restore()
+
+    ctx.lineJoin = 'round'
+    ctx.lineCap = 'round'
+    ctx.lineWidth = 5
+    ctx.strokeStyle = 'rgba(69,43,27,.20)'
     ctx.stroke(path)
-    ctx.setLineDash([6, 9])
-    ctx.lineWidth = 1.5
-    ctx.strokeStyle = 'rgba(255,255,255,.46)'
-    ctx.beginPath(); ctx.arc(0, 0, g.pitchRadius, 0, TWO_PI); ctx.stroke()
-    ctx.setLineDash([])
-    ctx.fillStyle = 'rgba(255,255,255,.58)'
-    ctx.beginPath(); ctx.ellipse(-g.pitchRadius * .25, -g.pitchRadius * .36, g.pitchRadius * .22, 9, -.45, 0, TWO_PI); ctx.fill()
+    ctx.lineWidth = 2
+    ctx.strokeStyle = 'rgba(255,255,255,.52)'
+    ctx.stroke(path)
+
+    drawGearInnerDetails(g)
     if(g.id === 'start') drawStartDirectionArrow(g)
+    ctx.restore()
+  }
+
+  function drawGearInnerDetails(g){
+    const ringRadius = Math.max(g.boreRadius + 13, g.pitchRadius * .43)
+    const hubRadius = Math.max(16, g.boreRadius * .78)
+
+    ctx.save()
+    ctx.lineWidth = 8
+    ctx.strokeStyle = 'rgba(255,255,255,.25)'
+    ctx.beginPath(); ctx.arc(0, 0, ringRadius + 5, 0, TWO_PI); ctx.stroke()
+    ctx.lineWidth = 3
+    ctx.strokeStyle = 'rgba(87,55,33,.18)'
+    ctx.beginPath(); ctx.arc(0, 0, ringRadius, 0, TWO_PI); ctx.stroke()
+
+    const hub = ctx.createRadialGradient(-hubRadius * .35, -hubRadius * .45, 2, 0, 0, hubRadius * 1.12)
+    hub.addColorStop(0, 'rgba(255,255,255,.95)')
+    hub.addColorStop(.32, g.accent)
+    hub.addColorStop(.74, shade(g.color, -7))
+    hub.addColorStop(1, shade(g.color, -24))
+    ctx.fillStyle = hub
+    ctx.beginPath(); ctx.arc(0, 0, hubRadius, 0, TWO_PI); ctx.fill()
+    ctx.lineWidth = 3
+    ctx.strokeStyle = 'rgba(87,55,33,.20)'
+    ctx.stroke()
+
+    ctx.fillStyle = 'rgba(255,255,255,.50)'
+    ctx.beginPath(); ctx.ellipse(-hubRadius * .28, -hubRadius * .35, hubRadius * .28, hubRadius * .13, -.45, 0, TWO_PI); ctx.fill()
     ctx.restore()
   }
 
