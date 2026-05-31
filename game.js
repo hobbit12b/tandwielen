@@ -16,11 +16,11 @@
   const TOOTH_DEPTH = 24
   const TOOTH_ADDENDUM = TOOTH_DEPTH * 0.36
   const TOOTH_DEDENDUM = TOOTH_DEPTH * 0.64
+  const RACK_BODY_H = 19
   const RACK_TOOTH_PHASE = 0
   const DEBUG_MESH = false
-  const MAGNETIC_VISUAL_GAP = 16
   const SNAP_TOLERANCE = 72
-  const LINK_DISTANCE_TOLERANCE = 18
+  const LINK_DISTANCE_TOLERANCE = 12
   const VISUAL_COLLISION_PADDING = 2
   const CONTACT_LINE_PADDING = 4
   const START_SPEED = 0.34
@@ -74,8 +74,6 @@
     room: 'assets/vertrek.png',
     slidingDoor: 'assets/schuifdeur.png',
     bracket: 'assets/beugel.png',
-    rack: 'assets/tandheugel.png',
-    machineGear: 'assets/tandwiel.png'
   })
 
   let mode = 'menu'
@@ -110,7 +108,7 @@
   function clamp(v, min, max){ return Math.max(min, Math.min(max, v)) }
   function normAngle(a){ return Math.atan2(Math.sin(a), Math.cos(a)) }
   function dist(a, b){ return Math.hypot(a.x - b.x, a.y - b.y) }
-  function visualCollisionRadius(gear){ return gear.outerRadius + VISUAL_COLLISION_PADDING }
+  function visualCollisionRadius(gear){ return gear.pitchRadius + VISUAL_COLLISION_PADDING }
 
   function gearRadii(teeth){
     const pitchRadius = teeth * TOOTH_PITCH / TWO_PI
@@ -205,10 +203,11 @@
     doorProgress = 0
     nextBtn.hidden = true
     feedback.classList.remove('show')
-    const targetY = rackDriveZone().gearY
-    const start = makeGear('start', 390, 410, 18, '#59c765', { fixed:true, driver:true, speed:-START_SPEED, accent:'#dff6a8' })
+    const targetY = rackPitchLineY() + gearRadii(level.target.teeth).pitchRadius
+    const start = makeGear('start', 470, 410, 18, '#59c765', { fixed:true, driver:true, speed:-START_SPEED, accent:'#dff6a8' })
     const target = makeGear('target', level.target.x, targetY, level.target.teeth, '#ec6fae', { fixed:true, target:true, accent:'#ffd8eb', angle: level.target.angle })
     gears = [start, target]
+    alignTargetGearToRack(target)
     links = []
     level.stock.forEach((item, index) => {
       const position = level1StockPosition(index)
@@ -349,53 +348,91 @@
     popClick(start.x, start.y, start)
   }
 
-  function meshDistance(a, b){ return a.outerRadius + b.outerRadius + MAGNETIC_VISUAL_GAP }
+  function meshDistance(a, b){ return a.pitchRadius + b.pitchRadius }
   function rackXForProgress(t = doorProgress){ return LEVEL_1_DOOR.rackClosedX - LEVEL_1_DOOR.travel * t }
-  function rackPitchLineY(){ return LEVEL_1_DOOR.rackY + LEVEL_1_DOOR.rackH }
+  function rackPitchLineY(){ return LEVEL_1_DOOR.rackY + RACK_BODY_H + TOOTH_DEDENDUM }
   function rackDriveZone(t = doorProgress){
     const door = LEVEL_1_DOOR
-    return { x:rackXForProgress(t) + 180, y:door.rackY + door.rackH + 22, w:280, h:64, gearY:door.rackY + door.rackH + 74 }
+    const target = getGear('target')
+    const gearY = rackPitchLineY() + (target?.pitchRadius || gearRadii(SOLVE_LEVEL_1.target.teeth).pitchRadius)
+    const x = rackXForProgress(t)
+    return { x, y:rackPitchLineY() - 8, w:door.rackW, h:TOOTH_DEPTH + 24, gearY }
+  }
+
+  function modulo(v, m){ return ((v % m) + m) % m }
+  function nearestMultiple(value, step, nearValue){
+    return value + Math.round((nearValue - value) / step) * step
+  }
+  function toothPhaseAt(gear, worldAngle, gearAngle = gear.angle){
+    return modulo((worldAngle - gearAngle) / (TWO_PI / gear.teeth), 1)
+  }
+  function phaseDistance(a, b){
+    const d = Math.abs(modulo(a - b + .5, 1) - .5)
+    return d
   }
 
   function nearestValleyAngle(anchor, angle){
-    return angle
+    const pitch = TWO_PI / anchor.teeth
+    return anchor.angle + nearestMultiple(pitch * .5, pitch, angle - anchor.angle)
   }
 
   function meshedGearAngleFor(anchorGear, anchorAngle, childGear, childAngle = childGear.angle){
-    return childAngle
+    const contactAngle = Math.atan2(childGear.y - anchorGear.y, childGear.x - anchorGear.x)
+    const childContactAngle = contactAngle + Math.PI
+    const anchorPitch = TWO_PI / anchorGear.teeth
+    const childPitch = TWO_PI / childGear.teeth
+    const anchorContactPhase = modulo((contactAngle - anchorAngle) / anchorPitch, 1)
+    const childContactPhase = modulo(anchorContactPhase + .5, 1)
+    const baseAngle = childContactAngle - childContactPhase * childPitch
+    return nearestMultiple(baseAngle, childPitch, childAngle)
   }
 
   function meshedGearAngle(anchorGear, childGear){
-    return childGear.angle
+    return meshedGearAngleFor(anchorGear, anchorGear.angle, childGear)
   }
 
   function alignGearToGearMesh(anchorGear, childGear){
-    // Magnetische koppelpunten vragen geen exacte tand-fase-uitlijning meer.
-    // De bestaande hoek blijft staan, zodat het wiel speelgoedachtig en rustig snapt.
+    childGear.angle = meshedGearAngle(anchorGear, childGear)
   }
 
   function gearMeshPhaseFitsFor(anchorGear, anchorAngle, childGear, childAngle){
-    return true
+    const contactAngle = Math.atan2(childGear.y - anchorGear.y, childGear.x - anchorGear.x)
+    const anchorPhase = toothPhaseAt(anchorGear, contactAngle, anchorAngle)
+    const childPhase = toothPhaseAt(childGear, contactAngle + Math.PI, childAngle)
+    return phaseDistance(childPhase, anchorPhase + .5) < .08
   }
 
   function gearMeshPhaseFits(anchorGear, childGear){
-    return true
+    return gearMeshPhaseFitsFor(anchorGear, anchorGear.angle, childGear, childGear.angle)
   }
 
   function gearLinkDistanceError(a, b){ return Math.abs(dist(a, b) - meshDistance(a, b)) }
 
+  function rackGearPhaseError(target){
+    const rackX = rackXForProgress()
+    const gearTopPhase = toothPhaseAt(target, -Math.PI / 2)
+    const rackPhase = modulo((target.x - rackX - RACK_TOOTH_PHASE) / TOOTH_PITCH, 1)
+    return phaseDistance(gearTopPhase, rackPhase + .5)
+  }
+
   function rackMeshState(target){
-    if(!target) return { valid:false, geometryValid:false, phaseValid:true, gapError:0 }
-    const zone = rackDriveZone()
-    const geometryValid = Math.abs(target.x - (zone.x + zone.w / 2)) <= zone.w / 2 &&
-      Math.abs(target.y - zone.gearY) <= zone.h / 2
+    if(!target) return { valid:false, geometryValid:false, phaseValid:false, gapError:0 }
+    const rackX = rackXForProgress()
+    const pitchY = rackPitchLineY()
+    const wantedY = pitchY + target.pitchRadius
+    const insideRack = target.x >= rackX + TOOTH_PITCH && target.x <= rackX + LEVEL_1_DOOR.rackW - TOOTH_PITCH
+    const gapError = Math.abs(target.y - wantedY)
+    const phaseError = rackGearPhaseError(target)
+    const geometryValid = insideRack && gapError <= 1.5
+    const phaseValid = phaseError < .08
     return {
-      valid: geometryValid,
+      valid: geometryValid && phaseValid,
       geometryValid,
-      phaseValid: true,
-      geometryError: geometryValid ? 0 : Math.hypot(target.x - (zone.x + zone.w / 2), target.y - zone.gearY),
-      gapError: 0,
-      contact:{ x:target.x, y:zone.y }
+      phaseValid,
+      geometryError: geometryValid ? 0 : Math.hypot(target.x - clamp(target.x, rackX, rackX + LEVEL_1_DOOR.rackW), target.y - wantedY),
+      gapError,
+      phaseError,
+      contact:{ x:target.x, y:pitchY }
     }
   }
 
@@ -405,8 +442,12 @@
 
   function alignTargetGearToRack(target){
     if(!target) return
-    const zone = rackDriveZone()
-    target.y = zone.gearY
+    target.y = rackPitchLineY() + target.pitchRadius
+    const topAngle = -Math.PI / 2
+    const gearPitch = TWO_PI / target.teeth
+    const rackPhase = modulo((target.x - rackXForProgress() - RACK_TOOTH_PHASE) / TOOTH_PITCH, 1)
+    target.angle = nearestMultiple(topAngle - modulo(rackPhase + .5, 1) * gearPitch, gearPitch, target.angle)
+    target.rackBaseAngle = target.angle
   }
 
   function solveRackClearanceY(gear){
@@ -506,6 +547,11 @@
           const childId = link.a === parentId ? link.b : link.a
           const child = getGear(childId)
           if(!parent || !child) return
+          if(applyAngles) alignGearToGearMesh(parent, child)
+          if(!gearMeshPhaseFits(parent, child)){
+            if(!hasLinkInList(rejected, parent.id, child.id)) rejected.push({ a:parent.id, b:child.id })
+            return
+          }
 
           if(driven.has(childId)){
             if(!hasLinkInList(accepted, parent.id, child.id)) accepted.push({ a:parent.id, b:child.id })
@@ -523,6 +569,12 @@
     candidates.forEach(link => {
       if(hasLinkInList(accepted, link.a, link.b) || hasLinkInList(rejected, link.a, link.b)) return
       if(!driven.has(link.a) || !driven.has(link.b)) return
+      const a = getGear(link.a)
+      const b = getGear(link.b)
+      if(!a || !b || !gearMeshPhaseFits(a, b)){
+        rejected.push({ a:link.a, b:link.b })
+        return
+      }
       accepted.push({ a:link.a, b:link.b })
     })
 
@@ -650,8 +702,16 @@
   }
 
   function seedSolveSnapPhases(gear, anchors){
-    // De magnetische oplossing gebruikt alleen vaste afstanden/contactzones;
-    // tandfase wordt bewust genegeerd.
+    const target = anchors.find(anchor => anchor.target)
+    const poweredAnchor = anchors.find(anchor => drivenGearIds().has(anchor.id))
+    if(target){
+      alignTargetGearToRack(target)
+      alignGearToGearMesh(target, gear)
+      if(poweredAnchor && poweredAnchor.id !== target.id) alignGearToGearMesh(gear, poweredAnchor)
+      return
+    }
+    if(poweredAnchor) alignGearToGearMesh(poweredAnchor, gear)
+    else if(anchors[0]) alignGearToGearMesh(anchors[0], gear)
   }
 
   function snapToSolveConstraintPosition(gear){
@@ -669,6 +729,7 @@
       gear.stock = false
       gear.x = position.x
       gear.y = position.y
+      alignTargetGearToRack(getGear('target'))
 
       seedSolveSnapPhases(gear, position.anchors)
       position.anchors.forEach(anchor => addGearLink(anchor, gear))
@@ -676,6 +737,8 @@
       const intendedContactsFit = position.anchors.every(anchor => linkAccepted(result.accepted, anchor.id, gear.id))
 
       if(result.driven.has(gear.id) && intendedContactsFit){
+        const target = getGear('target')
+        if(target && result.driven.has(target.id)) target.rackBaseAngle = target.angle
         propagateRotation()
         popClick(gear.x, gear.y, gear)
         return true
@@ -693,7 +756,7 @@
 
     for(const candidate of candidates){
       const rawAngle = Math.atan2(gear.y - candidate.anchor.y, gear.x - candidate.anchor.x)
-      const meshAngle = nearestValleyAngle(candidate.anchor, rawAngle)
+      const meshAngle = rawAngle
       const wanted = meshDistance(candidate.anchor, gear)
       const snappedGear = { ...gear, stock:false, x: candidate.anchor.x + Math.cos(meshAngle) * wanted, y: candidate.anchor.y + Math.sin(meshAngle) * wanted }
       if(wouldOverlapAnyGear(snappedGear, [candidate.anchor.id])) continue
@@ -1543,8 +1606,9 @@
     const moving = mode === 'solve' && target && isSolveChainComplete()
     const previousProgress = doorProgress
     if(moving){
-      const linearRackSpeed = -target.speed * target.pitchRadius
-      doorProgress = clamp(doorProgress + linearRackSpeed * dt / LEVEL_1_RACK_TRAVEL, 0, 1)
+      if(typeof target.rackBaseAngle !== 'number') target.rackBaseAngle = target.angle
+      const rackX = LEVEL_1_DOOR.rackClosedX + (target.angle - target.rackBaseAngle) * target.pitchRadius
+      doorProgress = clamp((LEVEL_1_DOOR.rackClosedX - rackX) / LEVEL_1_RACK_TRAVEL, 0, 1)
     } else {
       doorProgress = clamp(doorProgress - dt * .55, 0, 1)
     }
