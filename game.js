@@ -16,7 +16,7 @@
   const TOOTH_DEPTH = 32
   const TOOTH_ADDENDUM = TOOTH_DEPTH * 0.40
   const TOOTH_DEDENDUM = TOOTH_DEPTH * 0.60
-  const MESH_TOOTH_OVERLAP = -6
+  const MESH_TOOTH_OVERLAP = 0
   const SNAP_TOLERANCE = 50
   const LINK_DISTANCE_TOLERANCE = 14
   const VISUAL_COLLISION_PADDING = 0
@@ -56,6 +56,7 @@
     rackY: 183,
     rackW: 560,
     rackH: 43,
+    rackToothPhase: 11,
     level1RackMeshOffset: 0,
     brackets: [
       { x: 748, y: 170, w: 34, h: 68 },
@@ -277,6 +278,10 @@
   function alignLinkedGearPhases(){
     const queue = gears.filter(g => g.driver)
     const seen = new Set(queue.map(g => g.id))
+    alignGearComponentsFromRoots(queue, seen)
+  }
+
+  function alignGearComponentsFromRoots(queue, seen){
     while(queue.length){
       const gear = queue.shift()
       connectedTo(gear.id).forEach(nextId => {
@@ -287,6 +292,26 @@
         queue.push(next)
       })
     }
+    return seen
+  }
+
+  function alignSolveLevel1Phases(){
+    const target = getGear('target')
+    const queue = []
+    const seen = new Set()
+    if(target){
+      alignTargetGearToRack(target)
+      queue.push(target)
+      seen.add(target.id)
+    }
+    alignGearComponentsFromRoots(queue, seen)
+    alignGearComponentsFromRoots(gears.filter(g => g.driver && !seen.has(g.id)), seen)
+  }
+
+  function alignTargetGearToRack(target){
+    const pitch = TWO_PI / target.teeth
+    const topToothIndex = Math.round((-Math.PI / 2 - target.angle) / pitch)
+    target.angle = -Math.PI / 2 - topToothIndex * pitch
   }
 
   function solveRackClearanceY(gear){
@@ -358,7 +383,7 @@
         if(isValidLink(fieldGears[i], fieldGears[j])) links.push({ a: fieldGears[i].id, b: fieldGears[j].id })
       }
     }
-    alignLinkedGearPhases()
+    alignSolveLevel1Phases()
     propagateRotation()
     checkSolveState()
   }
@@ -812,10 +837,6 @@
 
   function drawStockTray(){
     ctx.save()
-    ctx.fillStyle = 'rgba(255,246,207,.90)'; ctx.strokeStyle = 'rgba(112,71,28,.22)'; ctx.lineWidth = 5
-    roundRect(385, 565, 510, 124, 32); ctx.fill(); ctx.stroke()
-    ctx.fillStyle = '#70471c'; ctx.font = '1000 24px ui-rounded, system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-    ctx.fillText('tandwielen', 640, 586)
     ctx.restore()
   }
 
@@ -877,9 +898,7 @@
     const rackX = door.rackClosedX - door.travel * t + door.level1RackMeshOffset
     ctx.save()
     ctx.translate(rackX, door.rackY)
-    if(assets.rack.ready){
-      ctx.drawImage(assets.rack, 0, 0, door.rackW, door.rackH)
-    } else drawFallbackRack(door.rackW, door.rackH)
+    drawLevel1MeshedRack(door.rackW, door.rackH, door.rackToothPhase)
     ctx.restore()
   }
 
@@ -909,6 +928,34 @@
       const sh = strip.h / WORLD.h * assets.level1Background.height
       ctx.drawImage(assets.level1Background, sx, sy, sw, sh, strip.x, strip.y, strip.w, strip.h)
     })
+  }
+
+  function drawLevel1MeshedRack(width, height, phase){
+    const bodyH = 18
+    const pitch = TOOTH_PITCH
+    const rootInset = 3
+
+    ctx.fillStyle = '#d8a350'
+    roundRect(0, 0, width, bodyH + 4, 6); ctx.fill()
+    ctx.fillStyle = '#b9782b'
+    ctx.fillRect(0, bodyH + 1, width, 5)
+
+    for(let x = phase - pitch; x < width + pitch; x += pitch){
+      ctx.beginPath()
+      ctx.moveTo(x - pitch * .34, bodyH)
+      ctx.lineTo(x, height - rootInset)
+      ctx.lineTo(x + pitch * .34, bodyH)
+      ctx.closePath()
+      ctx.fillStyle = '#d8a350'
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(103,65,28,.20)'
+      ctx.lineWidth = 3
+      ctx.stroke()
+    }
+
+    ctx.strokeStyle = 'rgba(255,255,255,.34)'
+    ctx.lineWidth = 3
+    ctx.beginPath(); ctx.moveTo(8, 5); ctx.lineTo(width - 8, 5); ctx.stroke()
   }
 
   function drawFallbackRack(width, height){
