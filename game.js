@@ -22,6 +22,7 @@
   const DEBUG_MESH = false
   const SNAP_TOLERANCE = 50
   const LINK_DISTANCE_TOLERANCE = 14
+  const LINK_PHASE_TOLERANCE = 0.08
   const VISUAL_COLLISION_PADDING = 0
   const CONTACT_LINE_PADDING = 4
   const START_SPEED = 0.34
@@ -136,6 +137,7 @@
       angle: opts.angle || 0,
       speed: opts.speed || 0,
       rotationSpeed: opts.speed || 0,
+      parentGearId: opts.parentGearId || null,
       pulse: 0,
       ...radii
     }
@@ -219,11 +221,22 @@
         angle: index * .35
       }))
     })
+    primeSolveStartPhaseForInitialChain()
     rebuildSolveLinks()
   }
 
   function resetSolveLevel(){
     resetSolveLevel1()
+  }
+
+  function primeSolveStartPhaseForInitialChain(){
+    const start = getGear('start')
+    const target = getGear('target')
+    const bridge = gears.find(g => !g.driver && !g.target && !g.stock)
+    if(!start || !target || !bridge) return
+    alignTargetGearToRack(target)
+    alignGearToGearMesh(target, bridge)
+    alignGearToGearMesh(bridge, start)
   }
 
   function level1StartMeshPosition(start, target, teeth){
@@ -245,8 +258,76 @@
 
   function getGear(id){ return gears.find(g => g.id === id) }
   function connectedTo(id){ return links.flatMap(l => l.a === id ? [l.b] : l.b === id ? [l.a] : []) }
+  function hasLink(aId, bId){ return links.some(l => (l.a === aId && l.b === bId) || (l.a === bId && l.b === aId)) }
+  function drivenGearIds(){
+    const queue = gears.filter(g => g.driver)
+    const seen = new Set(queue.map(g => g.id))
+    while(queue.length){
+      const gear = queue.shift()
+      connectedTo(gear.id).forEach(nextId => {
+        if(seen.has(nextId)) return
+        const next = getGear(nextId)
+        if(!next || next.stock) return
+        seen.add(nextId)
+        queue.push(next)
+      })
+    }
+    return seen
+  }
+  function addGearLink(parent, child){
+    if(!parent || !child || parent.id === child.id || hasLink(parent.id, child.id)) return false
+    links.push({ a: parent.id, b: child.id })
+    if(!child.driver && !child.parentGearId) child.parentGearId = parent.id
+    return true
+  }
+
+  function rebuildGearGraph({ alignChildren = true } = {}){
+    gears.forEach(g => { if(!g.driver) g.parentGearId = null })
+    const queue = gears.filter(g => g.driver)
+    const seen = new Set(queue.map(g => g.id))
+    const keepLinks = []
+
+    while(queue.length){
+      const parent = queue.shift()
+      links.forEach(link => {
+        const nextId = link.a === parent.id ? link.b : link.b === parent.id ? link.a : null
+        if(!nextId) return
+        const child = getGear(nextId)
+        if(!child || child.stock) return
+
+        if(seen.has(child.id)){
+          if(gearMeshPhaseFits(parent, child) && !hasLinkInList(keepLinks, parent.id, child.id)) keepLinks.push(link)
+          return
+        }
+
+        if(!isValidLink(parent, child)) return
+        if(alignChildren && !child.fixed) alignGearToGearMesh(parent, child)
+        if(child.fixed && !gearMeshPhaseFits(parent, child)) return
+
+        child.parentGearId = parent.id
+        seen.add(child.id)
+        queue.push(child)
+        if(!hasLinkInList(keepLinks, parent.id, child.id)) keepLinks.push(link)
+      })
+    }
+
+    links.forEach(link => {
+      const a = getGear(link.a)
+      const b = getGear(link.b)
+      if(!a || !b || seen.has(a.id) || seen.has(b.id) || !isValidLink(a, b)) return
+      if(!hasLinkInList(keepLinks, a.id, b.id)) keepLinks.push(link)
+    })
+
+    links = keepLinks
+    return seen
+  }
+
+  function hasLinkInList(list, aId, bId){
+    return list.some(l => (l.a === aId && l.b === bId) || (l.a === bId && l.b === aId))
+  }
 
   function propagateRotation(){
+    rebuildGearGraph({ alignChildren: false })
     gears.forEach(g => { if(!g.driver) g.speed = 0 })
     const queue = gears.filter(g => g.driver)
     const seen = new Set(queue.map(g => g.id))
@@ -254,7 +335,7 @@
       const gear = queue.shift()
       connectedTo(gear.id).forEach(nextId => {
         const next = getGear(nextId)
-        if(!next || seen.has(next.id)) return
+        if(!next || seen.has(next.id) || next.parentGearId !== gear.id) return
         next.speed = -gear.speed * gear.teeth / next.teeth
         seen.add(next.id)
         queue.push(next)
@@ -265,7 +346,7 @@
 
   function disconnectGear(gear){
     if(!gear || gear.driver || gear.fixed) return
-    links = links.filter(l => l.a !== gear.id && l.b !== gear.id)
+    removeLinksForGear(gear.id)
     gear.speed = 0
     propagateRotation()
     if(mode === 'solve') checkSolveState()
@@ -290,7 +371,7 @@
     return anchor.angle + (valleyIndex + 0.5) * pitchAngle
   }
 
-  function alignGearToGearMesh(anchorGear, childGear){
+  function meshedGearAngle(anchorGear, childGear){
     const meshAngle = Math.atan2(childGear.y - anchorGear.y, childGear.x - anchorGear.x)
     const anchorPitch = TWO_PI / anchorGear.teeth
     const childPitch = TWO_PI / childGear.teeth
@@ -298,40 +379,21 @@
     const childPhaseAtContact = anchorPhaseAtContact + 0.5
     const baseAngle = meshAngle + Math.PI - childPhaseAtContact * childPitch
     const nearestToCurrent = Math.round((childGear.angle - baseAngle) / childPitch)
-    childGear.angle = baseAngle + nearestToCurrent * childPitch
+    return baseAngle + nearestToCurrent * childPitch
   }
 
-  function alignLinkedGearPhases(){
-    const queue = gears.filter(g => g.driver)
-    const seen = new Set(queue.map(g => g.id))
-    alignGearComponentsFromRoots(queue, seen)
+  function alignGearToGearMesh(anchorGear, childGear){
+    childGear.angle = meshedGearAngle(anchorGear, childGear)
   }
 
-  function alignGearComponentsFromRoots(queue, seen){
-    while(queue.length){
-      const gear = queue.shift()
-      connectedTo(gear.id).forEach(nextId => {
-        const next = getGear(nextId)
-        if(!next || seen.has(next.id)) return
-        alignGearToGearMesh(gear, next)
-        seen.add(next.id)
-        queue.push(next)
-      })
-    }
-    return seen
+  function gearMeshPhaseFits(anchorGear, childGear){
+    return Math.abs(normAngle(childGear.angle - meshedGearAngle(anchorGear, childGear))) <= LINK_PHASE_TOLERANCE
   }
 
   function alignSolveLevel1Phases(){
     const target = getGear('target')
-    const queue = []
-    const seen = new Set()
-    if(target){
-      alignTargetGearToRack(target)
-      queue.push(target)
-      seen.add(target.id)
-    }
-    alignGearComponentsFromRoots(queue, seen)
-    alignGearComponentsFromRoots(gears.filter(g => g.driver && !seen.has(g.id)), seen)
+    if(target) alignTargetGearToRack(target)
+    rebuildGearGraph({ alignChildren: true })
   }
 
   function alignTargetGearToRack(target){
@@ -394,13 +456,12 @@
   }
 
   function validateLinks(){
-    const before = links.length
     links = links.filter(link => {
       const a = getGear(link.a)
       const b = getGear(link.b)
       return a && b && isValidLink(a, b)
     })
-    if(links.length !== before) propagateRotation()
+    rebuildGearGraph({ alignChildren: false })
   }
 
   function rebuildSolveLinks(){
@@ -433,11 +494,12 @@
   }
 
   function trySnapSolve(gear){
+    const powered = drivenGearIds()
     const candidates = gears
       .filter(g => g.id !== gear.id && !g.stock)
       .map(anchor => ({ anchor, error: Math.abs(dist(anchor, gear) - meshDistance(anchor, gear)) }))
       .filter(candidate => candidate.error < SNAP_TOLERANCE)
-      .sort((a, b) => a.error - b.error)
+      .sort((a, b) => (powered.has(b.anchor.id) - powered.has(a.anchor.id)) || a.error - b.error)
     const snapped = snapToFirstCandidate(gear, candidates, false)
     if(snapped) rebuildSolveLinks()
     else checkSolveState()
@@ -445,6 +507,9 @@
   }
 
   function snapToFirstCandidate(gear, candidates, singleLink){
+    const original = { x: gear.x, y: gear.y, angle: gear.angle, stock: gear.stock, parentGearId: gear.parentGearId }
+    const originalLinks = links.slice()
+
     for(const candidate of candidates){
       const rawAngle = Math.atan2(gear.y - candidate.anchor.y, gear.x - candidate.anchor.x)
       const meshAngle = nearestValleyAngle(candidate.anchor, rawAngle)
@@ -453,21 +518,37 @@
       if(wouldOverlapAnyGear(snappedGear, [candidate.anchor.id])) continue
       if(violatesSolveRackClearance(snappedGear)) continue
       if(isContactBlocked(candidate.anchor, snappedGear)) continue
+
+      links = originalLinks.slice()
+      Object.assign(gear, original)
       removeLinksForGear(gear.id)
       gear.stock = false
       gear.x = snappedGear.x
       gear.y = snappedGear.y
       alignGearToGearMesh(candidate.anchor, gear)
-      if(singleLink) links.push({ a: candidate.anchor.id, b: gear.id })
+      addGearLink(candidate.anchor, gear)
       validateLinks()
+
+      if(!hasLink(candidate.anchor.id, gear.id) || gear.parentGearId !== candidate.anchor.id){
+        links = originalLinks.slice()
+        Object.assign(gear, original)
+        continue
+      }
+
       propagateRotation()
       popClick(gear.x, gear.y, gear)
       return true
     }
+
+    links = originalLinks
+    Object.assign(gear, original)
     return false
   }
 
-  function removeLinksForGear(id){ links = links.filter(l => l.a !== id && l.b !== id) }
+  function removeLinksForGear(id){
+    links = links.filter(l => l.a !== id && l.b !== id)
+    gears.forEach(g => { if(g.parentGearId === id || g.id === id) g.parentGearId = null })
+  }
 
   function removeGear(gear){
     if(!gear || gear.driver) return false
