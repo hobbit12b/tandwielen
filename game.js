@@ -68,7 +68,9 @@
   const assets = loadImages({
     background: 'assets/background.png',
     level1Background: 'assets/background2.png',
-    robot: 'assets/robot.png',
+    robot: 'assets/01_neutraal_transparant.png',
+    robotBlink1: 'assets/01_neutraal_transparant01.png',
+    robotBlink2: 'assets/01_neutraal_transparant02.png',
     room: 'assets/vertrek.png',
     slidingDoor: 'assets/schuifdeur.png',
     bracket: 'assets/beugel.png',
@@ -760,7 +762,16 @@
   }
 
   function drawRobot(){
-    if(assets.robot.ready){ ctx.drawImage(assets.robot, -18, 575, 140, 165); return }
+    const robotX = -4
+    const robotY = 500
+    const robotW = 150
+    const robotH = 193
+    if(assets.robot.ready){
+      ctx.drawImage(assets.robot, robotX, robotY, robotW, robotH)
+      const blinkOverlay = currentRobotBlinkOverlay()
+      if(blinkOverlay?.ready) ctx.drawImage(blinkOverlay, robotX, robotY, robotW, robotH)
+      return
+    }
     ctx.save(); ctx.translate(45, 578)
     ctx.fillStyle = '#dde8ee'; roundRect(-55, 28, 130, 104, 24); ctx.fill()
     ctx.fillStyle = '#f3fbff'; roundRect(-35, 46, 88, 42, 16); ctx.fill()
@@ -770,6 +781,16 @@
     ctx.fillStyle = '#91c3d2'; roundRect(-34, 132, 88, 80, 18); ctx.fill()
     ctx.fillStyle = '#ffb34d'; ctx.beginPath(); ctx.arc(10, 172, 19, 0, TWO_PI); ctx.fill()
     ctx.restore()
+  }
+
+
+  function currentRobotBlinkOverlay(){
+    const cycle = performance.now() % 4600
+    if(cycle < 3860) return null
+    if(cycle < 3920) return assets.robotBlink1
+    if(cycle < 4005) return assets.robotBlink2
+    if(cycle < 4065) return assets.robotBlink1
+    return null
   }
 
   function roundRect(x, y, w, h, r){
@@ -931,31 +952,76 @@
   }
 
   function drawLevel1MeshedRack(width, height, phase){
-    const bodyH = 18
+    const bodyH = 19
     const pitch = TOOTH_PITCH
-    const rootInset = 3
+    const rootInset = 4
+    const toothTopW = pitch * .66
+    const toothBottomW = pitch * .46
+    const toothH = height - bodyH - rootInset
+    const toothHalf = toothTopW / 2
+    const endInset = 8
+    const firstToothX = phase + Math.ceil((toothHalf + endInset - phase) / pitch) * pitch
+
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(0, 0, width, height)
+    ctx.clip()
 
     ctx.fillStyle = '#d8a350'
-    roundRect(0, 0, width, bodyH + 4, 6); ctx.fill()
-    ctx.fillStyle = '#b9782b'
+    roundRect(0, 0, width, bodyH + 5, 7); ctx.fill()
+
+    const bodyGrad = ctx.createLinearGradient(0, 0, 0, bodyH + 5)
+    bodyGrad.addColorStop(0, '#f0c36c')
+    bodyGrad.addColorStop(.45, '#d8a350')
+    bodyGrad.addColorStop(1, '#b9782b')
+    ctx.fillStyle = bodyGrad
+    roundRect(0, 0, width, bodyH + 5, 7); ctx.fill()
+
+    ctx.fillStyle = 'rgba(106,63,24,.20)'
     ctx.fillRect(0, bodyH + 1, width, 5)
 
-    for(let x = phase - pitch; x < width + pitch; x += pitch){
-      ctx.beginPath()
-      ctx.moveTo(x - pitch * .34, bodyH)
-      ctx.lineTo(x, height - rootInset)
-      ctx.lineTo(x + pitch * .34, bodyH)
-      ctx.closePath()
-      ctx.fillStyle = '#d8a350'
+    for(let x = firstToothX; x <= width - toothHalf - endInset; x += pitch){
+      drawRoundedRackTooth(x, bodyH - 1, toothTopW, toothBottomW, toothH + 1, 5)
+      const toothGrad = ctx.createLinearGradient(0, bodyH - 1, 0, height - rootInset)
+      toothGrad.addColorStop(0, '#e5b45f')
+      toothGrad.addColorStop(.62, '#d49a48')
+      toothGrad.addColorStop(1, '#bd7c31')
+      ctx.fillStyle = toothGrad
       ctx.fill()
-      ctx.strokeStyle = 'rgba(103,65,28,.20)'
+      ctx.strokeStyle = 'rgba(103,65,28,.24)'
       ctx.lineWidth = 3
+      ctx.stroke()
+      ctx.strokeStyle = 'rgba(255,255,255,.26)'
+      ctx.lineWidth = 1.5
       ctx.stroke()
     }
 
-    ctx.strokeStyle = 'rgba(255,255,255,.34)'
+    ctx.strokeStyle = 'rgba(103,65,28,.24)'
     ctx.lineWidth = 3
-    ctx.beginPath(); ctx.moveTo(8, 5); ctx.lineTo(width - 8, 5); ctx.stroke()
+    roundRect(0, 0, width, height, 7); ctx.stroke()
+    ctx.strokeStyle = 'rgba(255,255,255,.38)'
+    ctx.lineWidth = 3
+    ctx.beginPath(); ctx.moveTo(10, 6); ctx.lineTo(width - 10, 6); ctx.stroke()
+    ctx.restore()
+  }
+
+  function drawRoundedRackTooth(cx, y, topW, bottomW, h, r){
+    const topLeft = cx - topW / 2
+    const topRight = cx + topW / 2
+    const bottomRight = cx + bottomW / 2
+    const bottomLeft = cx - bottomW / 2
+    const bottomY = y + h
+    ctx.beginPath()
+    ctx.moveTo(topLeft + r, y)
+    ctx.lineTo(topRight - r, y)
+    ctx.quadraticCurveTo(topRight, y, topRight, y + r)
+    ctx.lineTo(bottomRight, bottomY - r)
+    ctx.quadraticCurveTo(bottomRight, bottomY, bottomRight - r, bottomY)
+    ctx.lineTo(bottomLeft + r, bottomY)
+    ctx.quadraticCurveTo(bottomLeft, bottomY, bottomLeft, bottomY - r)
+    ctx.lineTo(topLeft, y + r)
+    ctx.quadraticCurveTo(topLeft, y, topLeft + r, y)
+    ctx.closePath()
   }
 
   function drawFallbackRack(width, height){
@@ -1003,6 +1069,7 @@
   function render(dt){
     if(mode === 'solve'){
       drawMachine()
+      drawRobot()
       gears.filter(g => !g.stock).forEach(drawGear)
       drawLevel1RackAndBrackets()
       drawStockTray()
