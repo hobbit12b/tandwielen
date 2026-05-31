@@ -41,7 +41,7 @@
   const SOLVE_LEVEL_1 = {
     name: 'Deur',
     machine: 'door',
-    target: { x: 524, y: 309, teeth: 12, angle: 0 },
+    target: { x: 650, y: 304, teeth: 12, angle: 0 },
     stock: [
       { teeth: 12, color: '#4fb5e8', accent: '#d9f5ff' }
     ]
@@ -57,7 +57,7 @@
     rackY: 183,
     rackW: 560,
     rackH: 43,
-    rackToothPhase: 11,
+    rackToothPhase: 18,
     level1RackMeshOffset: 0,
     brackets: [
       { x: 748, y: 170, w: 34, h: 68 },
@@ -204,7 +204,7 @@
     doorProgress = 0
     nextBtn.hidden = true
     feedback.classList.remove('show')
-    const start = makeGear('start', 258, 436, 18, '#59c765', { fixed:true, driver:true, speed:-START_SPEED, accent:'#dff6a8' })
+    const start = makeGear('start', 380, 410, 18, '#59c765', { fixed:true, driver:true, speed:-START_SPEED, accent:'#dff6a8' })
     const target = makeGear('target', level.target.x, level.target.y, level.target.teeth, '#ec6fae', { fixed:true, target:true, accent:'#ffd8eb', angle: level.target.angle })
     gears = [start, target]
     links = []
@@ -212,7 +212,8 @@
       const position = level1StartMeshPosition(start, target, item.teeth)
       gears.push(makeGear(`stock-${index}`, position.x, position.y, item.teeth, item.color, {
         accent: item.accent,
-        fixed: true,
+        fixed: false,
+        stock: false,
         angle: index * .35
       }))
     })
@@ -779,8 +780,8 @@
 
   function drawRobot(opts = {}){
     const large = !!opts.large
-    const robotX = large ? -42 : -4
-    const robotY = large ? 458 : 500
+    const robotX = large ? 16 : -4
+    const robotY = large ? 462 : 500
     const robotW = large ? 220 : 150
     const robotH = large ? 283 : 193
     if(assets.robot.ready){
