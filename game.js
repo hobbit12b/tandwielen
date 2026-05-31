@@ -17,6 +17,7 @@
   const TOOTH_ADDENDUM = TOOTH_DEPTH * 0.40
   const TOOTH_DEDENDUM = TOOTH_DEPTH * 0.60
   const MESH_TOOTH_OVERLAP = 0
+  const LEVEL_1_MESH_TOOTH_OVERLAP = TOOTH_DEDENDUM - TOOTH_ADDENDUM
   const SNAP_TOLERANCE = 50
   const LINK_DISTANCE_TOLERANCE = 14
   const VISUAL_COLLISION_PADDING = 0
@@ -40,7 +41,7 @@
   const SOLVE_LEVEL_1 = {
     name: 'Deur',
     machine: 'door',
-    target: { x: 535, y: 304, teeth: 12, angle: 0 },
+    target: { x: 524, y: 309, teeth: 12, angle: 0 },
     stock: [
       { teeth: 12, color: '#4fb5e8', accent: '#d9f5ff' }
     ]
@@ -108,7 +109,8 @@
   function clamp(v, min, max){ return Math.max(min, Math.min(max, v)) }
   function normAngle(a){ return Math.atan2(Math.sin(a), Math.cos(a)) }
   function dist(a, b){ return Math.hypot(a.x - b.x, a.y - b.y) }
-  function visualCollisionRadius(gear){ return gear.pitchRadius + VISUAL_COLLISION_PADDING }
+  function currentMeshToothOverlap(){ return mode === 'solve' ? LEVEL_1_MESH_TOOTH_OVERLAP : MESH_TOOTH_OVERLAP }
+  function visualCollisionRadius(gear){ return gear.pitchRadius - currentMeshToothOverlap() / 2 + VISUAL_COLLISION_PADDING }
 
   function gearRadii(teeth){
     const pitchRadius = teeth * TOOTH_PITCH / TWO_PI
@@ -207,21 +209,35 @@
     gears = [start, target]
     links = []
     level.stock.forEach((item, index) => {
-      const spacing = 150
-      const total = (level.stock.length - 1) * spacing
-      const x = 565 - total / 2 + index * spacing
-      const y = 628
-      gears.push(makeGear(`stock-${index}`, x, y, item.teeth, item.color, {
+      const position = level1StartMeshPosition(start, target, item.teeth)
+      gears.push(makeGear(`stock-${index}`, position.x, position.y, item.teeth, item.color, {
         accent: item.accent,
-        stock: true,
+        fixed: true,
         angle: index * .35
       }))
     })
-    propagateRotation()
+    rebuildSolveLinks()
   }
 
   function resetSolveLevel(){
     resetSolveLevel1()
+  }
+
+  function level1StartMeshPosition(start, target, teeth){
+    const radii = gearRadii(teeth)
+    const startDistance = meshDistance(start, radii)
+    const targetDistance = meshDistance(target, radii)
+    const dx = target.x - start.x
+    const dy = target.y - start.y
+    const centerDistance = Math.hypot(dx, dy)
+    const along = (startDistance * startDistance - targetDistance * targetDistance + centerDistance * centerDistance) / (2 * centerDistance)
+    const height = Math.sqrt(Math.max(0, startDistance * startDistance - along * along))
+    const ux = dx / centerDistance
+    const uy = dy / centerDistance
+    return {
+      x: start.x + ux * along - uy * height,
+      y: start.y + uy * along + ux * height
+    }
   }
 
   function getGear(id){ return gears.find(g => g.id === id) }
@@ -260,7 +276,7 @@
     popClick(start.x, start.y, start)
   }
 
-  function meshDistance(a, b){ return a.pitchRadius + b.pitchRadius - MESH_TOOTH_OVERLAP }
+  function meshDistance(a, b){ return a.pitchRadius + b.pitchRadius - currentMeshToothOverlap() }
 
   function nearestValleyAngle(anchor, angle){
     const pitchAngle = TWO_PI / anchor.teeth
@@ -761,11 +777,12 @@
     drawRobot()
   }
 
-  function drawRobot(){
-    const robotX = -4
-    const robotY = 500
-    const robotW = 150
-    const robotH = 193
+  function drawRobot(opts = {}){
+    const large = !!opts.large
+    const robotX = large ? -42 : -4
+    const robotY = large ? 458 : 500
+    const robotW = large ? 220 : 150
+    const robotH = large ? 283 : 193
     if(assets.robot.ready){
       ctx.drawImage(assets.robot, robotX, robotY, robotW, robotH)
       const blinkOverlay = currentRobotBlinkOverlay()
@@ -1069,7 +1086,7 @@
   function render(dt){
     if(mode === 'solve'){
       drawMachine()
-      drawRobot()
+      drawRobot({ large: true })
       gears.filter(g => !g.stock).forEach(drawGear)
       drawLevel1RackAndBrackets()
       drawStockTray()
