@@ -93,6 +93,8 @@
   let levelComplete = false
   let machineProgress = 0
   let doorProgress = 0
+  let debugMeshLinks = []
+  let debugRackState = null
   const LEVEL_1_RACK_TRAVEL = LEVEL_1_DOOR.travel
 
   function loadImages(map){
@@ -111,6 +113,8 @@
   function normAngle(a){ return Math.atan2(Math.sin(a), Math.cos(a)) }
   function dist(a, b){ return Math.hypot(a.x - b.x, a.y - b.y) }
   function currentMeshToothOverlap(){ return MESH_TOOTH_OVERLAP }
+  function positiveModulo(value, modulo){ return ((value % modulo) + modulo) % modulo }
+  function pitchPhaseError(value){ return Math.abs(positiveModulo(value + TOOTH_PITCH / 2, TOOTH_PITCH) - TOOTH_PITCH / 2) }
   function visualCollisionRadius(gear){ return gear.pitchRadius - currentMeshToothOverlap() / 2 + VISUAL_COLLISION_PADDING }
 
   function gearRadii(teeth){
@@ -258,6 +262,7 @@
 
   function getGear(id){ return gears.find(g => g.id === id) }
   function connectedTo(id){ return links.flatMap(l => l.a === id ? [l.b] : l.b === id ? [l.a] : []) }
+  function solveFieldGears(){ return gears.filter(g => !g.stock) }
   function hasLink(aId, bId){ return links.some(l => (l.a === aId && l.b === bId) || (l.a === bId && l.b === aId)) }
   function drivenGearIds(){
     const queue = gears.filter(g => g.driver)
@@ -282,6 +287,8 @@
   }
 
   function rebuildGearGraph({ alignChildren = true } = {}){
+    if(mode === 'solve') return buildSolveConstraintGraph({ applyAngles: alignChildren }).driven
+
     gears.forEach(g => { if(!g.driver) g.parentGearId = null })
     const queue = gears.filter(g => g.driver)
     const seen = new Set(queue.map(g => g.id))
@@ -300,9 +307,9 @@
           return
         }
 
-        if(!isValidLink(parent, child)) return
+        if(!isValidLinkGeometry(parent, child)) return
         if(alignChildren && !child.fixed) alignGearToGearMesh(parent, child)
-        if(child.fixed && !gearMeshPhaseFits(parent, child)) return
+        if(!gearMeshPhaseFits(parent, child)) return
 
         child.parentGearId = parent.id
         seen.add(child.id)
@@ -371,23 +378,44 @@
     return anchor.angle + (valleyIndex + 0.5) * pitchAngle
   }
 
-  function meshedGearAngle(anchorGear, childGear){
+  function meshedGearAngleFor(anchorGear, anchorAngle, childGear, childAngle = childGear.angle){
     const meshAngle = Math.atan2(childGear.y - anchorGear.y, childGear.x - anchorGear.x)
     const anchorPitch = TWO_PI / anchorGear.teeth
     const childPitch = TWO_PI / childGear.teeth
-    const anchorPhaseAtContact = normAngle(meshAngle - anchorGear.angle) / anchorPitch
+    const anchorPhaseAtContact = normAngle(meshAngle - anchorAngle) / anchorPitch
     const childPhaseAtContact = anchorPhaseAtContact + 0.5
     const baseAngle = meshAngle + Math.PI - childPhaseAtContact * childPitch
-    const nearestToCurrent = Math.round((childGear.angle - baseAngle) / childPitch)
+    const nearestToCurrent = Math.round((childAngle - baseAngle) / childPitch)
     return baseAngle + nearestToCurrent * childPitch
+  }
+
+  function meshedGearAngle(anchorGear, childGear){
+    return meshedGearAngleFor(anchorGear, anchorGear.angle, childGear, childGear.angle)
   }
 
   function alignGearToGearMesh(anchorGear, childGear){
     childGear.angle = meshedGearAngle(anchorGear, childGear)
   }
 
+  function gearMeshPhaseFitsFor(anchorGear, anchorAngle, childGear, childAngle){
+    return Math.abs(normAngle(childAngle - meshedGearAngleFor(anchorGear, anchorAngle, childGear, childAngle))) <= LINK_PHASE_TOLERANCE
+  }
+
   function gearMeshPhaseFits(anchorGear, childGear){
-    return Math.abs(normAngle(childGear.angle - meshedGearAngle(anchorGear, childGear))) <= LINK_PHASE_TOLERANCE
+    return gearMeshPhaseFitsFor(anchorGear, anchorGear.angle, childGear, childGear.angle)
+  }
+
+  function gearLinkDistanceError(a, b){ return Math.abs(dist(a, b) - meshDistance(a, b)) }
+
+  function rackMeshState(target, angle = target?.angle){
+    if(!target) return { valid:false, geometryValid:false, phaseValid:false, gapError:Infinity }
+    const pitchY = rackPitchLineY()
+    const geometryError = Math.abs((target.y - target.pitchRadius) - pitchY)
+    const rackSpace = target.x - rackXForProgress() + (angle + Math.PI / 2) * target.pitchRadius
+    const gapError = pitchPhaseError(rackSpace - rackGapPhase())
+    const geometryValid = geometryError <= 1.5
+    const phaseValid = gapError <= 0.75
+    return { valid: geometryValid && phaseValid, geometryValid, phaseValid, geometryError, gapError, contact:{ x:target.x, y:pitchY } }
   }
 
   function alignSolveLevel1Phases(){
@@ -445,7 +473,7 @@
     })
   }
 
-  function isValidLink(anchor, loose){
+  function isValidLinkGeometry(anchor, loose){
     const wanted = meshDistance(anchor, loose)
     if(anchor.stock || loose.stock) return false
     if(Math.abs(dist(anchor, loose) - wanted) > LINK_DISTANCE_TOLERANCE) return false
@@ -455,24 +483,122 @@
     return true
   }
 
+  function isValidLink(anchor, loose){
+    return isValidLinkGeometry(anchor, loose) && gearMeshPhaseFits(anchor, loose)
+  }
+
+  function candidateGearLinksForSolve(){
+    const fieldGears = solveFieldGears()
+    const candidates = []
+    for(let i = 0; i < fieldGears.length; i++){
+      for(let j = i + 1; j < fieldGears.length; j++){
+        const a = fieldGears[i]
+        const b = fieldGears[j]
+        if(!isValidLinkGeometry(a, b)) continue
+        candidates.push({ a:a.id, b:b.id, error:gearLinkDistanceError(a, b) })
+      }
+    }
+    return candidates.sort((a, b) => a.error - b.error)
+  }
+
+  function buildSolveConstraintGraph({ applyAngles = false } = {}){
+    const start = getGear('start')
+    const target = getGear('target')
+    const accepted = []
+    const rejected = []
+    const driven = new Set()
+    const phaseById = new Map()
+    const parentById = new Map()
+    const candidates = candidateGearLinksForSolve()
+    const adjacency = new Map()
+
+    gears.forEach(g => { if(!g.driver) g.parentGearId = null })
+    candidates.forEach(link => {
+      if(!adjacency.has(link.a)) adjacency.set(link.a, [])
+      if(!adjacency.has(link.b)) adjacency.set(link.b, [])
+      adjacency.get(link.a).push(link)
+      adjacency.get(link.b).push(link)
+    })
+
+    if(start){
+      driven.add(start.id)
+      phaseById.set(start.id, start.angle)
+      const queue = [start.id]
+      while(queue.length){
+        const parentId = queue.shift()
+        const parent = getGear(parentId)
+        const parentAngle = phaseById.get(parentId)
+        ;(adjacency.get(parentId) || []).forEach(link => {
+          const childId = link.a === parentId ? link.b : link.a
+          const child = getGear(childId)
+          if(!parent || !child) return
+
+          if(driven.has(childId)){
+            const fits = gearMeshPhaseFitsFor(parent, parentAngle, child, phaseById.get(childId))
+            if(fits){
+              if(!hasLinkInList(accepted, parent.id, child.id)) accepted.push({ a:parent.id, b:child.id })
+            } else rejected.push({ a:parent.id, b:child.id, reason:'phase' })
+            return
+          }
+
+          const childAngle = meshedGearAngleFor(parent, parentAngle, child, child.angle)
+          const rackState = child.target ? rackMeshState(child, childAngle) : null
+          if(child.target && !rackState.valid){
+            rejected.push({ a:parent.id, b:child.id, reason:'rack' })
+            return
+          }
+
+          driven.add(childId)
+          phaseById.set(childId, childAngle)
+          parentById.set(childId, parent.id)
+          accepted.push({ a:parent.id, b:child.id })
+          queue.push(childId)
+        })
+      }
+    }
+
+    candidates.forEach(link => {
+      if(hasLinkInList(accepted, link.a, link.b) || hasLinkInList(rejected, link.a, link.b)) return
+      if(!driven.has(link.a) || !driven.has(link.b)) return
+      const a = getGear(link.a)
+      const b = getGear(link.b)
+      const fits = a && b && gearMeshPhaseFitsFor(a, phaseById.get(a.id), b, phaseById.get(b.id))
+      if(fits) accepted.push({ a:link.a, b:link.b })
+      else rejected.push({ a:link.a, b:link.b, reason:'phase' })
+    })
+
+    debugRackState = target ? rackMeshState(target, phaseById.get(target.id) ?? target.angle) : null
+    debugMeshLinks = candidates.map(link => ({ ...link, valid:hasLinkInList(accepted, link.a, link.b), rejected:hasLinkInList(rejected, link.a, link.b) }))
+
+    links = accepted
+    if(applyAngles){
+      phaseById.forEach((angle, id) => {
+        const gear = getGear(id)
+        if(gear && !gear.driver) gear.angle = angle
+      })
+    }
+    parentById.forEach((parentId, childId) => {
+      const child = getGear(childId)
+      if(child && !child.driver) child.parentGearId = parentId
+    })
+    return { driven, accepted, rejected, phaseById, rackState:debugRackState }
+  }
+
   function validateLinks(){
+    if(mode === 'solve'){
+      buildSolveConstraintGraph({ applyAngles:false })
+      return
+    }
     links = links.filter(link => {
       const a = getGear(link.a)
       const b = getGear(link.b)
-      return a && b && isValidLink(a, b)
+      return a && b && isValidLinkGeometry(a, b)
     })
     rebuildGearGraph({ alignChildren: false })
   }
 
   function rebuildSolveLinks(){
-    links = []
-    const fieldGears = gears.filter(g => !g.stock)
-    for(let i = 0; i < fieldGears.length; i++){
-      for(let j = i + 1; j < fieldGears.length; j++){
-        if(isValidLink(fieldGears[i], fieldGears[j])) links.push({ a: fieldGears[i].id, b: fieldGears[j].id })
-      }
-    }
-    alignSolveLevel1Phases()
+    buildSolveConstraintGraph({ applyAngles:true })
     propagateRotation()
     checkSolveState()
   }
@@ -501,7 +627,7 @@
       .filter(candidate => candidate.error < SNAP_TOLERANCE)
       .sort((a, b) => (powered.has(b.anchor.id) - powered.has(a.anchor.id)) || a.error - b.error)
     const snapped = snapToFirstCandidate(gear, candidates, false)
-    if(snapped) rebuildSolveLinks()
+    if(snapped) checkSolveState()
     else checkSolveState()
     return snapped
   }
@@ -526,13 +652,22 @@
       gear.x = snappedGear.x
       gear.y = snappedGear.y
       alignGearToGearMesh(candidate.anchor, gear)
-      addGearLink(candidate.anchor, gear)
-      validateLinks()
 
-      if(!hasLink(candidate.anchor.id, gear.id) || gear.parentGearId !== candidate.anchor.id){
-        links = originalLinks.slice()
-        Object.assign(gear, original)
-        continue
+      if(mode === 'solve'){
+        const result = buildSolveConstraintGraph({ applyAngles:true })
+        if(!result.driven.has(gear.id) || !hasLink(candidate.anchor.id, gear.id)){
+          links = originalLinks.slice()
+          Object.assign(gear, original)
+          continue
+        }
+      } else {
+        addGearLink(candidate.anchor, gear)
+        validateLinks()
+        if(!hasLink(candidate.anchor.id, gear.id) || gear.parentGearId !== candidate.anchor.id){
+          links = originalLinks.slice()
+          Object.assign(gear, original)
+          continue
+        }
       }
 
       propagateRotation()
@@ -669,9 +804,16 @@
     return !!target && Math.abs(target.speed) > 0.001
   }
 
+  function isSolveChainComplete(){
+    const target = getGear('target')
+    if(!target || !isTargetGearPowered()) return false
+    const rackState = rackMeshState(target)
+    return rackState.valid && drivenGearIds().has(target.id)
+  }
+
   function checkSolveState(){
     if(mode !== 'solve') return
-    const solved = isTargetGearPowered()
+    const solved = isSolveChainComplete()
     if(solved && !levelComplete){
       levelComplete = true
       showFeedback('Gelukt!')
@@ -1183,11 +1325,12 @@
       ctx.beginPath(); ctx.arc(g.x, g.y, 4, 0, TWO_PI); ctx.fill()
     })
 
-    links.forEach(link => {
+    const debugLinks = debugMeshLinks.length ? debugMeshLinks : links.map(link => ({ ...link, valid:true }))
+    debugLinks.forEach(link => {
       const a = getGear(link.a)
       const b = getGear(link.b)
       if(!a || !b) return
-      const valid = isValidLink(a, b)
+      const valid = !!link.valid
       const angle = Math.atan2(b.y - a.y, b.x - a.x)
       const contact = {
         x: a.x + Math.cos(angle) * a.pitchRadius,
@@ -1208,16 +1351,14 @@
     ctx.setLineDash([])
 
     if(target){
-      const contact = { x: target.x, y: pitchY }
-      const rackSpace = target.x - rackXForProgress() + (target.angle + Math.PI / 2) * target.pitchRadius
-      const gapError = Math.abs(normAngle((rackSpace - rackGapPhase()) / TOOTH_PITCH * TWO_PI)) / TWO_PI * TOOTH_PITCH
-      const validRackMesh = Math.abs(target.y - target.pitchRadius - pitchY) < 0.01 && gapError < 0.75
-      ctx.fillStyle = validRackMesh ? '#43be5f' : '#e53e3e'
+      const rackState = debugRackState || rackMeshState(target)
+      const contact = rackState.contact || { x: target.x, y: pitchY }
+      ctx.fillStyle = rackState.valid ? '#43be5f' : '#e53e3e'
       ctx.beginPath(); ctx.arc(contact.x, contact.y, 7, 0, TWO_PI); ctx.fill()
       ctx.font = '800 16px ui-rounded, system-ui, sans-serif'
       ctx.textAlign = 'left'
       ctx.textBaseline = 'bottom'
-      ctx.fillText(validRackMesh ? 'rack mesh OK' : 'rack mesh check', contact.x + 12, contact.y - 8)
+      ctx.fillText(rackState.valid ? 'rack mesh OK' : `rack mesh fout ${rackState.gapError.toFixed(1)}px`, contact.x + 12, contact.y - 8)
     }
     ctx.restore()
   }
@@ -1286,7 +1427,7 @@
 
   function updateSolveMachine(dt){
     const target = getGear('target')
-    const moving = mode === 'solve' && target && Math.abs(target.speed) > 0.001
+    const moving = mode === 'solve' && target && isSolveChainComplete()
     const previousProgress = doorProgress
     if(moving){
       const linearRackSpeed = -target.speed * target.pitchRadius
