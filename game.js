@@ -52,6 +52,9 @@
       x: 592.0709993999253,
       y: 464.5135570295299,
       phase: -0.09219530971510803,
+      bluePhase: -0.09219530971510803,
+      greenPhase: LEVEL_1_GREEN_PHASE,
+      pinkPhase: LEVEL_1_TARGET_PHASE,
       connectsGreen: true,
       connectsPink: false,
       result: 'partial'
@@ -62,6 +65,9 @@
       x: 594.9883422839321,
       y: 362.5556000393827,
       phase: LEVEL_1_BLUE_PHASE,
+      bluePhase: LEVEL_1_BLUE_PHASE,
+      greenPhase: LEVEL_1_GREEN_PHASE,
+      pinkPhase: LEVEL_1_TARGET_PHASE,
       connectsGreen: true,
       connectsPink: true,
       result: 'success'
@@ -72,6 +78,9 @@
       x: 728.2556769925859,
       y: 343.73877253569674,
       phase: LEVEL_1_BLUE_PHASE,
+      bluePhase: LEVEL_1_BLUE_PHASE,
+      greenPhase: LEVEL_1_GREEN_PHASE,
+      pinkPhase: LEVEL_1_TARGET_PHASE,
       connectsGreen: false,
       connectsPink: true,
       result: 'unpowered'
@@ -130,6 +139,7 @@
   let doorProgress = 0
   let debugMeshLinks = []
   let debugRackState = null
+  let solveSnapPauseUntil = 0
   const LEVEL_1_RACK_TRAVEL = LEVEL_1_DOOR.travel
 
   function loadImages(map){
@@ -245,6 +255,7 @@
     levelComplete = false
     machineProgress = 0
     doorProgress = 0
+    solveSnapPauseUntil = 0
     nextBtn.hidden = true
     feedback.classList.remove('show')
     const targetY = rackPitchLineY() + gearRadii(level.target.teeth).pitchRadius
@@ -688,6 +699,22 @@
       .sort((a, b) => a.distance - b.distance)[0]?.slot || null
   }
 
+  function alignSlotGears(slot, blueGear){
+    if(!slot || !blueGear) return
+    const start = getGear('start')
+    const target = getGear('target')
+
+    blueGear.x = slot.x
+    blueGear.y = slot.y
+    blueGear.angle = slot.bluePhase ?? slot.phase
+
+    if(start) start.angle = slot.greenPhase ?? meshedGearAngleFor(blueGear, blueGear.angle, start, start.angle)
+    if(target){
+      target.angle = slot.pinkPhase ?? LEVEL_1_TARGET_PHASE
+      target.rackBaseAngle = target.angle
+    }
+  }
+
   function snapToLevel1Slot(gear){
     if(!isLevel1BlueGear(gear)) return false
     const slot = closestLevel1Slot(gear)
@@ -696,23 +723,17 @@
     removeLinksForGear(gear.id)
     const start = getGear('start')
     const target = getGear('target')
-    if(start) start.angle = LEVEL_1_GREEN_PHASE
-    if(target){
-      target.angle = LEVEL_1_TARGET_PHASE
-      target.rackBaseAngle = LEVEL_1_TARGET_PHASE
-    }
     gear.stock = false
     gear.lockedToAxle = true
     gear.lockedSlotId = slot.id
     gear.lockedToSlot = true
     gear.currentSlot = slot.id
-    gear.x = slot.x
-    gear.y = slot.y
-    gear.angle = slot.phase
+    alignSlotGears(slot, gear)
     if(slot.connectsGreen && start) addGearLink(start, gear)
     if(slot.connectsPink && target) addGearLink(gear, target)
     buildSolveConstraintGraph({ applyAngles:false })
     propagateRotation()
+    solveSnapPauseUntil = performance.now() + 160
     popClick(gear.x, gear.y, gear)
     return true
   }
@@ -1355,33 +1376,39 @@
     const blueTemplate = gears.find(g => isLevel1BlueGear(g)) || makeGear('slot-template', 0, 0, 12, '#4fb5e8')
     LEVEL_1_SLOTS.forEach(slot => {
       const occupied = gears.some(g => g.lockedSlotId === slot.id)
-      const slotGear = { ...blueTemplate, x:0, y:0, angle:slot.phase, stock:false, pulse:0 }
+      const slotGear = { ...blueTemplate, x:0, y:0, angle:slot.bluePhase ?? slot.phase, stock:false, pulse:0 }
       const path = buildGearPath(slotGear)
-      const baseAlpha = occupied ? .12 : .24
+      const baseAlpha = occupied ? .20 : .40
 
       ctx.save()
       ctx.translate(slot.x, slot.y)
-      ctx.shadowColor = 'rgba(92,125,148,.28)'
-      ctx.shadowBlur = occupied ? 8 : 18
-      ctx.fillStyle = `rgba(94, 130, 154, ${baseAlpha})`
+      ctx.shadowColor = 'rgba(45,68,88,.38)'
+      ctx.shadowBlur = occupied ? 10 : 20
+      ctx.fillStyle = `rgba(67, 91, 111, ${baseAlpha})`
       ctx.fill(path)
       ctx.shadowColor = 'transparent'
 
       ctx.save()
-      ctx.globalAlpha = occupied ? .10 : .18
-      ctx.filter = 'blur(5px)'
-      ctx.scale(1.045, 1.045)
-      ctx.fillStyle = '#8aa4b6'
+      ctx.globalAlpha = occupied ? .14 : .25
+      ctx.filter = 'blur(7px)'
+      ctx.scale(1.055, 1.055)
+      ctx.fillStyle = '#58778f'
       ctx.fill(path)
       ctx.restore()
 
       ctx.save()
-      ctx.globalAlpha = occupied ? .06 : .10
-      ctx.filter = 'blur(10px)'
-      ctx.scale(1.10, 1.10)
-      ctx.fillStyle = '#b7c8d4'
+      ctx.globalAlpha = occupied ? .08 : .16
+      ctx.filter = 'blur(12px)'
+      ctx.scale(1.12, 1.12)
+      ctx.fillStyle = '#93a9bb'
       ctx.fill(path)
       ctx.restore()
+
+      ctx.fillStyle = occupied ? 'rgba(245,250,255,.34)' : 'rgba(245,250,255,.66)'
+      ctx.font = '900 44px ui-rounded, "Arial Rounded MT Bold", system-ui, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('?', 0, 3)
 
       ctx.restore()
     })
@@ -1745,6 +1772,12 @@
 
   function updateSolveMachine(dt){
     const target = getGear('target')
+    if(mode === 'solve' && performance.now() < solveSnapPauseUntil){
+      gears.forEach(g => { g.rotationSpeed = 0 })
+      machineProgress = doorProgress
+      return
+    }
+
     const moving = mode === 'solve' && target && isSolveChainComplete()
     const previousProgress = doorProgress
     if(moving){
@@ -1753,6 +1786,7 @@
       doorProgress = clamp(doorProgress - dt * .55, 0, 1)
     }
     syncSolveGearRotationWithRack(doorProgress - previousProgress, dt)
+    gears.filter(g => g.driver && !connectedTo(g.id).length).forEach(g => { g.rotationSpeed = 0 })
     machineProgress = doorProgress
   }
 
