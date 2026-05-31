@@ -14,8 +14,8 @@
   const WORLD = { w: 1280, h: 720 }
   const TOOTH_PITCH = 28
   const TOOTH_DEPTH = 24
-  const TOOTH_ADDENDUM = TOOTH_DEPTH * 0.40
-  const TOOTH_DEDENDUM = TOOTH_DEPTH * 0.60
+  const TOOTH_ADDENDUM = TOOTH_DEPTH * 0.36
+  const TOOTH_DEDENDUM = TOOTH_DEPTH * 0.64
   const MESH_TOOTH_OVERLAP = 0
   const RACK_TOOTH_PHASE = 0
   const RACK_GEAR_PHASE_OFFSET = TOOTH_PITCH / 2
@@ -217,15 +217,16 @@
     gears = [start, target]
     links = []
     level.stock.forEach((item, index) => {
-      const position = level1StartMeshPosition(start, target, item.teeth)
+      const position = level1StockPosition(index)
       gears.push(makeGear(`stock-${index}`, position.x, position.y, item.teeth, item.color, {
+        homeX: position.x,
+        homeY: position.y,
         accent: item.accent,
         fixed: false,
-        stock: false,
+        stock: true,
         angle: index * .35
       }))
     })
-    primeSolveStartPhaseForInitialChain()
     rebuildSolveLinks()
   }
 
@@ -243,21 +244,8 @@
     alignGearToGearMesh(bridge, start)
   }
 
-  function level1StartMeshPosition(start, target, teeth){
-    const radii = gearRadii(teeth)
-    const startDistance = meshDistance(start, radii)
-    const targetDistance = meshDistance(target, radii)
-    const dx = target.x - start.x
-    const dy = target.y - start.y
-    const centerDistance = Math.hypot(dx, dy)
-    const along = (startDistance * startDistance - targetDistance * targetDistance + centerDistance * centerDistance) / (2 * centerDistance)
-    const height = Math.sqrt(Math.max(0, startDistance * startDistance - along * along))
-    const ux = dx / centerDistance
-    const uy = dy / centerDistance
-    return {
-      x: start.x + ux * along - uy * height,
-      y: start.y + uy * along + ux * height
-    }
+  function level1StockPosition(index){
+    return { x: 235 + index * 92, y: 570 }
   }
 
   function getGear(id){ return gears.find(g => g.id === id) }
@@ -706,6 +694,21 @@
       .filter(other => isValidLinkGeometry(other, gear))
   }
 
+  function seedSolveSnapPhases(gear, anchors){
+    const targetAnchor = anchors.find(anchor => anchor.target)
+    if(targetAnchor){
+      alignTargetGearToRack(targetAnchor)
+      alignGearToGearMesh(targetAnchor, gear)
+      anchors
+        .filter(anchor => anchor.id !== targetAnchor.id)
+        .forEach(anchor => alignGearToGearMesh(gear, anchor))
+      return
+    }
+
+    const poweredAnchor = anchors.find(anchor => Math.abs(anchor.speed) > 0.001)
+    if(poweredAnchor) alignGearToGearMesh(poweredAnchor, gear)
+  }
+
   function snapToSolveConstraintPosition(gear){
     const snapAnchors = solveSnapAnchors(gear)
     if(!snapAnchors.length) return false
@@ -722,6 +725,7 @@
       gear.x = position.x
       gear.y = position.y
 
+      seedSolveSnapPhases(gear, position.anchors)
       const result = buildSolveConstraintGraph({ applyAngles:true })
       const physicalContacts = physicalSolveContactsFor(gear)
       const intendedContacts = new Set(position.anchors.map(anchor => anchor.id))
@@ -955,19 +959,19 @@
     for(let i = 0; i < gear.teeth; i++){
       const c = gear.angle + i * pitch
       const valleyLeft = c - pitch * .50
-      const valleyFloorEnd = c - pitch * .38
-      const leftShoulder = c - pitch * .24
-      const topLeft = c - pitch * .12
-      const topRight = c + pitch * .12
-      const rightShoulder = c + pitch * .24
-      const valleyFloorStart = c + pitch * .38
+      const valleyFloorEnd = c - pitch * .32
+      const leftShoulder = c - pitch * .20
+      const topLeft = c - pitch * .09
+      const topRight = c + pitch * .09
+      const rightShoulder = c + pitch * .20
+      const valleyFloorStart = c + pitch * .32
       const valleyRight = c + pitch * .50
       path.arc(0, 0, gear.rootRadius, valleyLeft, valleyFloorEnd, false)
-      gearCurveTo(path, c - pitch * .28, gear.rootRadius + TOOTH_DEPTH * .20, leftShoulder, gear.pitchRadius + TOOTH_DEPTH * .04)
-      gearCurveTo(path, c - pitch * .19, gear.outerRadius, topLeft, gear.outerRadius)
+      gearCurveTo(path, c - pitch * .25, gear.rootRadius + TOOTH_DEPTH * .16, leftShoulder, gear.pitchRadius + TOOTH_DEPTH * .02)
+      gearCurveTo(path, c - pitch * .15, gear.outerRadius, topLeft, gear.outerRadius)
       path.arc(0, 0, gear.outerRadius, topLeft, topRight, false)
-      gearCurveTo(path, c + pitch * .19, gear.outerRadius, rightShoulder, gear.pitchRadius + TOOTH_DEPTH * .04)
-      gearCurveTo(path, c + pitch * .28, gear.rootRadius + TOOTH_DEPTH * .20, valleyFloorStart, gear.rootRadius)
+      gearCurveTo(path, c + pitch * .15, gear.outerRadius, rightShoulder, gear.pitchRadius + TOOTH_DEPTH * .02)
+      gearCurveTo(path, c + pitch * .25, gear.rootRadius + TOOTH_DEPTH * .16, valleyFloorStart, gear.rootRadius)
       gearLineTo(path, valleyRight, gear.rootRadius)
     }
     path.closePath()
