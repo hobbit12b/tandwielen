@@ -130,6 +130,7 @@
       stock: !!opts.stock,
       angle: opts.angle || 0,
       speed: opts.speed || 0,
+      rotationSpeed: opts.speed || 0,
       pulse: 0,
       ...radii
     }
@@ -237,6 +238,7 @@
         queue.push(next)
       })
     }
+    gears.forEach(g => { g.rotationSpeed = g.speed })
   }
 
   function disconnectGear(gear){
@@ -968,24 +970,70 @@
     drawEffects(dt)
   }
 
+  function syncSolveGearRotationWithRack(progressDelta, dt){
+    if(mode !== 'solve') return
+    gears.forEach(g => { g.rotationSpeed = g.speed })
+
+    const target = getGear('target')
+    if(!target) return
+
+    const queue = [target]
+    const linkedToRack = new Set([target.id])
+    while(queue.length){
+      const gear = queue.shift()
+      connectedTo(gear.id).forEach(nextId => {
+        const next = getGear(nextId)
+        if(!next || linkedToRack.has(next.id)) return
+        linkedToRack.add(next.id)
+        queue.push(next)
+      })
+    }
+
+    if(Math.abs(progressDelta) < 0.000001 || dt <= 0){
+      linkedToRack.forEach(id => {
+        const gear = getGear(id)
+        if(gear) gear.rotationSpeed = 0
+      })
+      return
+    }
+
+    const rackLinearSpeed = progressDelta * LEVEL_1_RACK_TRAVEL / dt
+    target.rotationSpeed = -rackLinearSpeed / target.pitchRadius
+    queue.push(target)
+    const synced = new Set([target.id])
+    while(queue.length){
+      const gear = queue.shift()
+      connectedTo(gear.id).forEach(nextId => {
+        const next = getGear(nextId)
+        if(!next || synced.has(next.id)) return
+        next.rotationSpeed = -gear.rotationSpeed * gear.teeth / next.teeth
+        synced.add(next.id)
+        queue.push(next)
+      })
+    }
+  }
+
   function updateSolveMachine(dt){
     const target = getGear('target')
     const moving = mode === 'solve' && target && Math.abs(target.speed) > 0.001
+    const previousProgress = doorProgress
     if(moving){
       const linearRackSpeed = -target.speed * target.pitchRadius
       doorProgress = clamp(doorProgress + linearRackSpeed * dt / LEVEL_1_RACK_TRAVEL, 0, 1)
     } else {
       doorProgress = clamp(doorProgress - dt * .55, 0, 1)
     }
+    syncSolveGearRotationWithRack(doorProgress - previousProgress, dt)
     machineProgress = doorProgress
   }
 
   function update(dt){
+    updateSolveMachine(dt)
     gears.forEach(g => {
-      if(!drag || drag.id !== g.id) g.angle += g.speed * dt
+      const rotationSpeed = mode === 'solve' ? g.rotationSpeed : g.speed
+      if(!drag || drag.id !== g.id) g.angle += rotationSpeed * dt
       g.pulse = Math.max(0, g.pulse - dt * 2.8)
     })
-    updateSolveMachine(dt)
     hintAlpha = hasDraggedDiscover ? Math.max(0, hintAlpha - dt * 2.6) : Math.min(1, hintAlpha + dt * 1.4)
   }
 
