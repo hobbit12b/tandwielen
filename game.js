@@ -447,7 +447,7 @@
     return gears.some(other => {
       if(other.id === candidateGear.id || ignored.has(other.id) || other.stock) return false
       const minDistance = visualCollisionRadius(candidateGear) + visualCollisionRadius(other)
-      return dist(candidateGear, other) < minDistance
+      return dist(candidateGear, other) < minDistance - 0.5
     })
   }
 
@@ -620,16 +620,128 @@
   }
 
   function trySnapSolve(gear){
-    const powered = drivenGearIds()
-    const candidates = gears
-      .filter(g => g.id !== gear.id && !g.stock)
-      .map(anchor => ({ anchor, error: Math.abs(dist(anchor, gear) - meshDistance(anchor, gear)) }))
-      .filter(candidate => candidate.error < SNAP_TOLERANCE)
-      .sort((a, b) => (powered.has(b.anchor.id) - powered.has(a.anchor.id)) || a.error - b.error)
-    const snapped = snapToFirstCandidate(gear, candidates, false)
-    if(snapped) checkSolveState()
-    else checkSolveState()
+    const snapped = snapToSolveConstraintPosition(gear)
+    checkSolveState()
     return snapped
+  }
+
+  function solveSnapAnchors(gear){
+    const powered = drivenGearIds()
+    return gears
+      .filter(anchor => anchor.id !== gear.id && !anchor.stock)
+      .map(anchor => ({
+        anchor,
+        powered: powered.has(anchor.id),
+        error: Math.abs(dist(anchor, gear) - meshDistance(anchor, gear))
+      }))
+      .filter(candidate => candidate.error < SNAP_TOLERANCE)
+      .sort((a, b) => (b.powered - a.powered) || a.error - b.error)
+  }
+
+  function circleIntersections(a, ar, b, br){
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const d = Math.hypot(dx, dy)
+    if(d <= 0.0001 || d > ar + br || d < Math.abs(ar - br)) return []
+    const along = (ar * ar - br * br + d * d) / (2 * d)
+    const heightSq = ar * ar - along * along
+    if(heightSq < -0.0001) return []
+    const h = Math.sqrt(Math.max(0, heightSq))
+    const ux = dx / d
+    const uy = dy / d
+    const base = { x: a.x + ux * along, y: a.y + uy * along }
+    return [
+      { x: base.x - uy * h, y: base.y + ux * h },
+      { x: base.x + uy * h, y: base.y - ux * h }
+    ]
+  }
+
+  function candidateSolveSnapPositions(gear, snapAnchors){
+    const positions = []
+    const addPosition = (x, y, anchors) => {
+      const probe = { ...gear, stock:false, x, y }
+      if(wouldOverlapAnyGear(probe, anchors.map(a => a.id))) return
+      if(violatesSolveRackClearance(probe)) return
+      if(anchors.some(anchor => isContactBlocked(anchor, probe))) return
+      const error = anchors.reduce((sum, anchor) => sum + Math.abs(dist(anchor, probe) - meshDistance(anchor, probe)), 0)
+      positions.push({ x, y, anchors, error, contactCount: anchors.length })
+    }
+
+    for(let i = 0; i < snapAnchors.length; i++){
+      const first = snapAnchors[i].anchor
+      const rawAngle = Math.atan2(gear.y - first.y, gear.x - first.x)
+      const wanted = meshDistance(first, gear)
+      addPosition(first.x + Math.cos(rawAngle) * wanted, first.y + Math.sin(rawAngle) * wanted, [first])
+
+      for(let j = i + 1; j < snapAnchors.length; j++){
+        const second = snapAnchors[j].anchor
+        circleIntersections(first, meshDistance(first, gear), second, meshDistance(second, gear))
+          .forEach(point => {
+            if(Math.hypot(point.x - gear.x, point.y - gear.y) > SNAP_TOLERANCE * 1.8) return
+            addPosition(point.x, point.y, [first, second])
+          })
+      }
+    }
+
+    const powered = drivenGearIds()
+    return positions.sort((a, b) =>
+      (b.contactCount - a.contactCount) ||
+      (b.anchors.some(anchor => powered.has(anchor.id)) - a.anchors.some(anchor => powered.has(anchor.id))) ||
+      a.error - b.error ||
+      Math.hypot(a.x - gear.x, a.y - gear.y) - Math.hypot(b.x - gear.x, b.y - gear.y)
+    )
+  }
+
+  function linkAccepted(list, aId, bId){
+    return hasLinkInList(list, aId, bId)
+  }
+
+  function linkRejected(list, aId, bId){
+    return hasLinkInList(list, aId, bId)
+  }
+
+  function physicalSolveContactsFor(gear){
+    return solveFieldGears()
+      .filter(other => other.id !== gear.id)
+      .filter(other => isValidLinkGeometry(other, gear))
+  }
+
+  function snapToSolveConstraintPosition(gear){
+    const snapAnchors = solveSnapAnchors(gear)
+    if(!snapAnchors.length) return false
+
+    const original = { x: gear.x, y: gear.y, angle: gear.angle, stock: gear.stock, parentGearId: gear.parentGearId }
+    const originalLinks = links.slice()
+    const positions = candidateSolveSnapPositions(gear, snapAnchors)
+
+    for(const position of positions){
+      links = originalLinks.slice()
+      Object.assign(gear, original)
+      removeLinksForGear(gear.id)
+      gear.stock = false
+      gear.x = position.x
+      gear.y = position.y
+
+      const result = buildSolveConstraintGraph({ applyAngles:true })
+      const physicalContacts = physicalSolveContactsFor(gear)
+      const intendedContacts = new Set(position.anchors.map(anchor => anchor.id))
+      const allPhysicalContactsFit = physicalContacts.every(anchor => {
+        if(linkRejected(result.rejected, anchor.id, gear.id)) return false
+        if(result.driven.has(anchor.id) || result.driven.has(gear.id)) return linkAccepted(result.accepted, anchor.id, gear.id)
+        return !intendedContacts.has(anchor.id)
+      })
+      const intendedContactsFit = position.anchors.every(anchor => linkAccepted(result.accepted, anchor.id, gear.id))
+
+      if(result.driven.has(gear.id) && intendedContactsFit && allPhysicalContactsFit){
+        propagateRotation()
+        popClick(gear.x, gear.y, gear)
+        return true
+      }
+    }
+
+    links = originalLinks
+    Object.assign(gear, original)
+    return false
   }
 
   function snapToFirstCandidate(gear, candidates, singleLink){
