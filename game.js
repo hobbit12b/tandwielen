@@ -21,6 +21,8 @@
   const DEBUG_MESH = false
   const SNAP_TOLERANCE = 72
   const LINK_DISTANCE_TOLERANCE = 12
+  const GEAR_TO_GEAR_PHASE_OFFSET = 0.5
+  const GEAR_TO_GEAR_PHASE_TOLERANCE = 0.08
   const VISUAL_COLLISION_PADDING = 2
   const CONTACT_LINE_PADDING = 4
   const START_SPEED = 0.34
@@ -382,7 +384,7 @@
     const anchorPitch = TWO_PI / anchorGear.teeth
     const childPitch = TWO_PI / childGear.teeth
     const anchorContactPhase = modulo((contactAngle - anchorAngle) / anchorPitch, 1)
-    const childContactPhase = modulo(anchorContactPhase + .5, 1)
+    const childContactPhase = modulo(anchorContactPhase + GEAR_TO_GEAR_PHASE_OFFSET, 1)
     const baseAngle = childContactAngle - childContactPhase * childPitch
     return nearestMultiple(baseAngle, childPitch, childAngle)
   }
@@ -399,7 +401,7 @@
     const contactAngle = Math.atan2(childGear.y - anchorGear.y, childGear.x - anchorGear.x)
     const anchorPhase = toothPhaseAt(anchorGear, contactAngle, anchorAngle)
     const childPhase = toothPhaseAt(childGear, contactAngle + Math.PI, childAngle)
-    return phaseDistance(childPhase, anchorPhase + .5) < .08
+    return phaseDistance(childPhase, anchorPhase + GEAR_TO_GEAR_PHASE_OFFSET) < GEAR_TO_GEAR_PHASE_TOLERANCE
   }
 
   function gearMeshPhaseFits(anchorGear, childGear){
@@ -547,7 +549,7 @@
           const childId = link.a === parentId ? link.b : link.a
           const child = getGear(childId)
           if(!parent || !child) return
-          if(applyAngles) alignGearToGearMesh(parent, child)
+          if(applyAngles && !child.fixed) alignGearToGearMesh(parent, child)
           if(!gearMeshPhaseFits(parent, child)){
             if(!hasLinkInList(rejected, parent.id, child.id)) rejected.push({ a:parent.id, b:child.id })
             return
@@ -568,7 +570,6 @@
 
     candidates.forEach(link => {
       if(hasLinkInList(accepted, link.a, link.b) || hasLinkInList(rejected, link.a, link.b)) return
-      if(!driven.has(link.a) || !driven.has(link.b)) return
       const a = getGear(link.a)
       const b = getGear(link.b)
       if(!a || !b || !gearMeshPhaseFits(a, b)){
@@ -675,8 +676,9 @@
     for(let i = 0; i < snapAnchors.length; i++){
       const first = snapAnchors[i].anchor
       const rawAngle = Math.atan2(gear.y - first.y, gear.x - first.x)
+      const meshAngle = nearestValleyAngle(first, rawAngle)
       const wanted = meshDistance(first, gear)
-      addPosition(first.x + Math.cos(rawAngle) * wanted, first.y + Math.sin(rawAngle) * wanted, [first])
+      addPosition(first.x + Math.cos(meshAngle) * wanted, first.y + Math.sin(meshAngle) * wanted, [first])
 
       for(let j = i + 1; j < snapAnchors.length; j++){
         const second = snapAnchors[j].anchor
@@ -736,7 +738,7 @@
       const result = buildSolveConstraintGraph({ applyAngles:true })
       const intendedContactsFit = position.anchors.every(anchor => linkAccepted(result.accepted, anchor.id, gear.id))
 
-      if(result.driven.has(gear.id) && intendedContactsFit){
+      if(intendedContactsFit){
         const target = getGear('target')
         if(target && result.driven.has(target.id)) target.rackBaseAngle = target.angle
         propagateRotation()
