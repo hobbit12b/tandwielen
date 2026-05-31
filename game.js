@@ -23,6 +23,7 @@
   const LINK_DISTANCE_TOLERANCE = 12
   const GEAR_TO_GEAR_PHASE_OFFSET = 0.5
   const GEAR_TO_GEAR_PHASE_TOLERANCE = 0.08
+  const LEVEL_1_AXLE_SNAP_TOLERANCE = 76
   const VISUAL_COLLISION_PADDING = 2
   const CONTACT_LINE_PADDING = 4
   const START_SPEED = 0.34
@@ -41,10 +42,17 @@
     add: { x: 1118, y: 142, size: 78 },
     trash: { x: 1118, y: 590, size: 92 }
   }
+  const LEVEL_1_GREEN_PHASE = -0.0959964650095051
+  const LEVEL_1_BLUE_PHASE = -0.2243994752564138
+  const LEVEL_1_TARGET_PHASE = 0.037399912542735336
+  const LEVEL_1_AXLES = [
+    { id: 'middleAxle', x: 594.9883422839321, y: 362.5556000393827, accepts: 'blue' }
+  ]
+
   const SOLVE_LEVEL_1 = {
     name: 'Deur',
     machine: 'door',
-    target: { x: 650, teeth: 12, angle: 0 },
+    target: { x: 650, teeth: 12, angle: LEVEL_1_TARGET_PHASE },
     stock: [
       { teeth: 12, color: '#4fb5e8', accent: '#d9f5ff' }
     ]
@@ -137,6 +145,8 @@
       speed: opts.speed || 0,
       rotationSpeed: opts.speed || 0,
       parentGearId: opts.parentGearId || null,
+      acceptsAxle: opts.acceptsAxle || null,
+      lockedToAxle: !!opts.lockedToAxle,
       pulse: 0,
       ...radii
     }
@@ -206,10 +216,10 @@
     nextBtn.hidden = true
     feedback.classList.remove('show')
     const targetY = rackPitchLineY() + gearRadii(level.target.teeth).pitchRadius
-    const start = makeGear('start', 470, 410, 18, '#59c765', { fixed:true, driver:true, speed:-START_SPEED, accent:'#dff6a8' })
-    const target = makeGear('target', level.target.x, targetY, level.target.teeth, '#ec6fae', { fixed:true, target:true, accent:'#ffd8eb', angle: level.target.angle })
+    const start = makeGear('start', 470, 410, 18, '#59c765', { fixed:true, driver:true, speed:-START_SPEED, accent:'#dff6a8', angle:LEVEL_1_GREEN_PHASE })
+    const target = makeGear('target', level.target.x, targetY, level.target.teeth, '#ec6fae', { fixed:true, target:true, accent:'#ffd8eb', angle: LEVEL_1_TARGET_PHASE })
     gears = [start, target]
-    alignTargetGearToRack(target)
+    target.rackBaseAngle = target.angle
     links = []
     level.stock.forEach((item, index) => {
       const position = level1StockPosition(index)
@@ -219,6 +229,8 @@
         accent: item.accent,
         fixed: false,
         stock: true,
+        acceptsAxle: 'blue',
+        lockedToAxle: false,
         angle: index * .35
       }))
     })
@@ -245,6 +257,7 @@
 
   function getGear(id){ return gears.find(g => g.id === id) }
   function connectedTo(id){ return links.flatMap(l => l.a === id ? [l.b] : l.b === id ? [l.a] : []) }
+  function isLevel1BlueGear(gear){ return gear?.acceptsAxle === 'blue' }
   function solveFieldGears(){ return gears.filter(g => !g.stock) }
   function hasLink(aId, bId){ return links.some(l => (l.a === aId && l.b === bId) || (l.a === bId && l.b === aId)) }
   function drivenGearIds(){
@@ -336,6 +349,7 @@
 
   function disconnectGear(gear){
     if(!gear || gear.driver || gear.fixed) return
+    if(mode === 'solve') gear.lockedToAxle = false
     removeLinksForGear(gear.id)
     gear.speed = 0
     propagateRotation()
@@ -508,17 +522,19 @@
   }
 
   function candidateGearLinksForSolve(){
-    const fieldGears = solveFieldGears()
-    const candidates = []
-    for(let i = 0; i < fieldGears.length; i++){
-      for(let j = i + 1; j < fieldGears.length; j++){
-        const a = fieldGears[i]
-        const b = fieldGears[j]
-        if(!isValidLinkGeometry(a, b)) continue
-        candidates.push({ a:a.id, b:b.id, error:gearLinkDistanceError(a, b) })
-      }
-    }
-    return candidates.sort((a, b) => a.error - b.error)
+    const blue = gears.find(g => isLevel1BlueGear(g))
+    const start = getGear('start')
+    const target = getGear('target')
+    if(!blue?.lockedToAxle || !start || !target) return []
+
+    return [
+      { a:start.id, b:blue.id, error:gearLinkDistanceError(start, blue) },
+      { a:blue.id, b:target.id, error:gearLinkDistanceError(blue, target) }
+    ].filter(link => {
+      const a = getGear(link.a)
+      const b = getGear(link.b)
+      return a && b && link.error <= LINK_DISTANCE_TOLERANCE && gearMeshPhaseFits(a, b)
+    })
   }
 
   function buildSolveConstraintGraph({ applyAngles = false } = {}){
@@ -626,9 +642,35 @@
   }
 
   function trySnapSolve(gear){
-    const snapped = snapToSolveConstraintPosition(gear)
+    const snapped = snapToLevel1Axle(gear)
     checkSolveState()
     return snapped
+  }
+
+  function snapToLevel1Axle(gear){
+    if(!isLevel1BlueGear(gear)) return false
+    const axle = LEVEL_1_AXLES.find(item => item.accepts === gear.acceptsAxle)
+    if(!axle || Math.hypot(gear.x - axle.x, gear.y - axle.y) > LEVEL_1_AXLE_SNAP_TOLERANCE) return false
+
+    removeLinksForGear(gear.id)
+    const start = getGear('start')
+    const target = getGear('target')
+    if(start) start.angle = LEVEL_1_GREEN_PHASE
+    if(target){
+      target.angle = LEVEL_1_TARGET_PHASE
+      target.rackBaseAngle = LEVEL_1_TARGET_PHASE
+    }
+    gear.stock = false
+    gear.lockedToAxle = true
+    gear.x = axle.x
+    gear.y = axle.y
+    gear.angle = LEVEL_1_BLUE_PHASE
+    if(start) addGearLink(start, gear)
+    if(target) addGearLink(gear, target)
+    buildSolveConstraintGraph({ applyAngles:false })
+    propagateRotation()
+    popClick(gear.x, gear.y, gear)
+    return true
   }
 
   function solveSnapAnchors(gear){
@@ -915,15 +957,25 @@
     const gear = getGear(drag.id)
     if(mode === 'discover' && overTrash(p)) removeGear(gear)
     else if(mode === 'discover') trySnap(gear)
-    else if(mode === 'solve' && !trySnap(gear)) returnSolveGearToStock(gear)
+    else if(mode === 'solve' && !trySnap(gear)) releaseSolveGearLoose(gear)
     else if(mode === 'solve') checkSolveState()
     drag = null
+  }
+
+  function releaseSolveGearLoose(gear){
+    if(!gear || gear.fixed || gear.target || gear.driver) return
+    removeLinksForGear(gear.id)
+    gear.stock = false
+    gear.lockedToAxle = false
+    gear.speed = 0
+    rebuildSolveLinks()
   }
 
   function returnSolveGearToStock(gear){
     if(!gear || gear.fixed || gear.target || gear.driver) return
     removeLinksForGear(gear.id)
     gear.stock = true
+    gear.lockedToAxle = false
     gear.x = gear.homeX
     gear.y = gear.homeY
     gear.speed = 0
@@ -938,8 +990,9 @@
   function isSolveChainComplete(){
     const target = getGear('target')
     if(!target || !isTargetGearPowered()) return false
+    const blue = gears.find(g => isLevel1BlueGear(g))
     const rackState = rackMeshState(target)
-    return rackState.valid && drivenGearIds().has(target.id)
+    return !!blue?.lockedToAxle && rackState.valid && drivenGearIds().has(target.id)
   }
 
   function checkSolveState(){
@@ -974,18 +1027,18 @@
     for(let i = 0; i < gear.teeth; i++){
       const c = gear.angle + i * pitch
       const valleyLeft = c - pitch * .50
-      const valleyFloorEnd = c - pitch * .32
-      const leftShoulder = c - pitch * .20
-      const topLeft = c - pitch * .09
-      const topRight = c + pitch * .09
-      const rightShoulder = c + pitch * .20
-      const valleyFloorStart = c + pitch * .32
+      const valleyFloorEnd = c - pitch * .36
+      const leftShoulder = c - pitch * .19
+      const topLeft = c - pitch * .07
+      const topRight = c + pitch * .07
+      const rightShoulder = c + pitch * .19
+      const valleyFloorStart = c + pitch * .36
       const valleyRight = c + pitch * .50
       path.arc(0, 0, gear.rootRadius, valleyLeft, valleyFloorEnd, false)
       gearCurveTo(path, c - pitch * .25, gear.rootRadius + TOOTH_DEPTH * .16, leftShoulder, gear.pitchRadius + TOOTH_DEPTH * .02)
-      gearCurveTo(path, c - pitch * .15, gear.outerRadius, topLeft, gear.outerRadius)
+      gearCurveTo(path, c - pitch * .13, gear.outerRadius, topLeft, gear.outerRadius)
       path.arc(0, 0, gear.outerRadius, topLeft, topRight, false)
-      gearCurveTo(path, c + pitch * .15, gear.outerRadius, rightShoulder, gear.pitchRadius + TOOTH_DEPTH * .02)
+      gearCurveTo(path, c + pitch * .13, gear.outerRadius, rightShoulder, gear.pitchRadius + TOOTH_DEPTH * .02)
       gearCurveTo(path, c + pitch * .25, gear.rootRadius + TOOTH_DEPTH * .16, valleyFloorStart, gear.rootRadius)
       gearLineTo(path, valleyRight, gear.rootRadius)
     }
@@ -1244,6 +1297,30 @@
 
   function drawMachine(){
     drawDoorMachineBase(doorProgress)
+    drawLevel1Axles()
+  }
+
+  function drawLevel1Axles(){
+    if(mode !== 'solve') return
+    LEVEL_1_AXLES.forEach(axle => {
+      const occupied = gears.some(g => g.lockedToAxle && g.acceptsAxle === axle.accepts)
+      ctx.save()
+      ctx.translate(axle.x, axle.y)
+      ctx.globalAlpha = occupied ? .32 : .88
+      ctx.lineWidth = occupied ? 4 : 7
+      ctx.strokeStyle = occupied ? 'rgba(65,72,82,.35)' : 'rgba(255,255,255,.92)'
+      ctx.fillStyle = occupied ? 'rgba(255,255,255,.18)' : 'rgba(255,246,207,.46)'
+      ctx.shadowColor = occupied ? 'transparent' : 'rgba(255,247,168,.55)'
+      ctx.shadowBlur = occupied ? 0 : 14
+      ctx.beginPath(); ctx.arc(0, 0, 38, 0, TWO_PI); ctx.fill(); ctx.stroke()
+      ctx.shadowColor = 'transparent'
+      ctx.lineWidth = 5
+      ctx.strokeStyle = 'rgba(88,62,38,.38)'
+      ctx.beginPath(); ctx.arc(0, 0, 17, 0, TWO_PI); ctx.stroke()
+      ctx.fillStyle = 'rgba(88,62,38,.42)'
+      ctx.beginPath(); ctx.arc(0, 0, 6, 0, TWO_PI); ctx.fill()
+      ctx.restore()
+    })
   }
 
   function drawLevel1RackAndBrackets(){
@@ -1354,8 +1431,8 @@
     const bodyH = 19
     const pitch = TOOTH_PITCH
     const rootInset = 4
-    const toothTopW = pitch * .66
-    const toothBottomW = pitch * .46
+    const toothTopW = pitch * .54
+    const toothBottomW = pitch * .38
     const toothH = height - bodyH - rootInset
     const toothHalf = toothTopW / 2
     const endInset = 8
@@ -1544,7 +1621,6 @@
     if(mode === 'solve'){
       drawMachine()
       drawRobot({ large: true })
-      drawMagneticLinks()
       gears.filter(g => !g.stock).forEach(drawGear)
       drawLevel1RackAndBrackets()
       drawDebugMesh()
