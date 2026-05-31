@@ -290,13 +290,15 @@
     return anchor.angle + (valleyIndex + 0.5) * pitchAngle
   }
 
-  function phaseGearForMesh(anchor, loose, meshAngle){
-    const anchorPitch = TWO_PI / anchor.teeth
-    const loosePitch = TWO_PI / loose.teeth
-    const anchorValleyIndex = Math.round((meshAngle - anchor.angle) / anchorPitch - .5)
-    const anchorValleyAngle = anchor.angle + (anchorValleyIndex + .5) * anchorPitch
-    const looseToothIndex = Math.round((anchorValleyAngle + Math.PI - loose.angle) / loosePitch)
-    loose.angle = anchorValleyAngle + Math.PI - looseToothIndex * loosePitch
+  function alignGearToGearMesh(anchorGear, childGear){
+    const meshAngle = Math.atan2(childGear.y - anchorGear.y, childGear.x - anchorGear.x)
+    const anchorPitch = TWO_PI / anchorGear.teeth
+    const childPitch = TWO_PI / childGear.teeth
+    const anchorPhaseAtContact = normAngle(meshAngle - anchorGear.angle) / anchorPitch
+    const childPhaseAtContact = anchorPhaseAtContact + 0.5
+    const baseAngle = meshAngle + Math.PI - childPhaseAtContact * childPitch
+    const nearestToCurrent = Math.round((childGear.angle - baseAngle) / childPitch)
+    childGear.angle = baseAngle + nearestToCurrent * childPitch
   }
 
   function alignLinkedGearPhases(){
@@ -311,7 +313,7 @@
       connectedTo(gear.id).forEach(nextId => {
         const next = getGear(nextId)
         if(!next || seen.has(next.id)) return
-        phaseGearForMesh(gear, next, Math.atan2(next.y - gear.y, next.x - gear.x))
+        alignGearToGearMesh(gear, next)
         seen.add(next.id)
         queue.push(next)
       })
@@ -455,7 +457,7 @@
       gear.stock = false
       gear.x = snappedGear.x
       gear.y = snappedGear.y
-      phaseGearForMesh(candidate.anchor, gear, meshAngle)
+      alignGearToGearMesh(candidate.anchor, gear)
       if(singleLink) links.push({ a: candidate.anchor.id, b: gear.id })
       validateLinks()
       propagateRotation()
