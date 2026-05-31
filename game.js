@@ -12,12 +12,14 @@
   const feedback = document.getElementById('feedback')
 
   const WORLD = { w: 1280, h: 720 }
-  const TOOTH_PITCH = 36
-  const TOOTH_DEPTH = 32
+  const TOOTH_PITCH = 28
+  const TOOTH_DEPTH = 24
   const TOOTH_ADDENDUM = TOOTH_DEPTH * 0.40
   const TOOTH_DEDENDUM = TOOTH_DEPTH * 0.60
   const MESH_TOOTH_OVERLAP = 0
-  const LEVEL_1_MESH_TOOTH_OVERLAP = TOOTH_DEDENDUM - TOOTH_ADDENDUM
+  const RACK_TOOTH_PHASE = 0
+  const RACK_GEAR_PHASE_OFFSET = TOOTH_PITCH / 2
+  const DEBUG_MESH = false
   const SNAP_TOLERANCE = 50
   const LINK_DISTANCE_TOLERANCE = 14
   const VISUAL_COLLISION_PADDING = 0
@@ -41,7 +43,7 @@
   const SOLVE_LEVEL_1 = {
     name: 'Deur',
     machine: 'door',
-    target: { x: 650, y: 304, teeth: 12, angle: 0 },
+    target: { x: 650, teeth: 12, angle: 0 },
     stock: [
       { teeth: 12, color: '#4fb5e8', accent: '#d9f5ff' }
     ]
@@ -57,8 +59,6 @@
     rackY: 183,
     rackW: 560,
     rackH: 43,
-    rackToothPhase: 18,
-    level1RackMeshOffset: 0,
     brackets: [
       { x: 748, y: 170, w: 34, h: 68 },
       { x: 1002, y: 170, w: 34, h: 68 }
@@ -109,7 +109,7 @@
   function clamp(v, min, max){ return Math.max(min, Math.min(max, v)) }
   function normAngle(a){ return Math.atan2(Math.sin(a), Math.cos(a)) }
   function dist(a, b){ return Math.hypot(a.x - b.x, a.y - b.y) }
-  function currentMeshToothOverlap(){ return mode === 'solve' ? LEVEL_1_MESH_TOOTH_OVERLAP : MESH_TOOTH_OVERLAP }
+  function currentMeshToothOverlap(){ return MESH_TOOTH_OVERLAP }
   function visualCollisionRadius(gear){ return gear.pitchRadius - currentMeshToothOverlap() / 2 + VISUAL_COLLISION_PADDING }
 
   function gearRadii(teeth){
@@ -204,8 +204,10 @@
     doorProgress = 0
     nextBtn.hidden = true
     feedback.classList.remove('show')
-    const start = makeGear('start', 380, 410, 18, '#59c765', { fixed:true, driver:true, speed:-START_SPEED, accent:'#dff6a8' })
-    const target = makeGear('target', level.target.x, level.target.y, level.target.teeth, '#ec6fae', { fixed:true, target:true, accent:'#ffd8eb', angle: level.target.angle })
+    const targetRadii = gearRadii(level.target.teeth)
+    const targetY = rackPitchLineY() + targetRadii.pitchRadius
+    const start = makeGear('start', 450, 410, 18, '#59c765', { fixed:true, driver:true, speed:-START_SPEED, accent:'#dff6a8' })
+    const target = makeGear('target', level.target.x, targetY, level.target.teeth, '#ec6fae', { fixed:true, target:true, accent:'#ffd8eb', angle: level.target.angle })
     gears = [start, target]
     links = []
     level.stock.forEach((item, index) => {
@@ -278,6 +280,9 @@
   }
 
   function meshDistance(a, b){ return a.pitchRadius + b.pitchRadius - currentMeshToothOverlap() }
+  function rackXForProgress(t = doorProgress){ return LEVEL_1_DOOR.rackClosedX - LEVEL_1_DOOR.travel * t }
+  function rackPitchLineY(){ return LEVEL_1_DOOR.rackY + LEVEL_1_DOOR.rackH }
+  function rackGapPhase(){ return RACK_TOOTH_PHASE + RACK_GEAR_PHASE_OFFSET }
 
   function nearestValleyAngle(anchor, angle){
     const pitchAngle = TWO_PI / anchor.teeth
@@ -328,9 +333,11 @@
   }
 
   function alignTargetGearToRack(target){
-    const pitch = TWO_PI / target.teeth
-    const topToothIndex = Math.round((-Math.PI / 2 - target.angle) / pitch)
-    target.angle = -Math.PI / 2 - topToothIndex * pitch
+    const localContactX = target.x - rackXForProgress()
+    const currentRackSpace = localContactX + (target.angle + Math.PI / 2) * target.pitchRadius
+    const gapIndex = Math.round((currentRackSpace - rackGapPhase()) / TOOTH_PITCH)
+    const targetRackSpace = rackGapPhase() + gapIndex * TOOTH_PITCH
+    target.angle = (targetRackSpace - localContactX) / target.pitchRadius - Math.PI / 2
   }
 
   function solveRackClearanceY(gear){
@@ -934,10 +941,10 @@
 
   function drawLevel1Rack(t){
     const door = LEVEL_1_DOOR
-    const rackX = door.rackClosedX - door.travel * t + door.level1RackMeshOffset
+    const rackX = rackXForProgress(t)
     ctx.save()
     ctx.translate(rackX, door.rackY)
-    drawLevel1MeshedRack(door.rackW, door.rackH, door.rackToothPhase)
+    drawLevel1MeshedRack(door.rackW, door.rackH, RACK_TOOTH_PHASE)
     ctx.restore()
   }
 
@@ -1043,13 +1050,7 @@
   }
 
   function drawFallbackRack(width, height){
-    ctx.fillStyle = '#d5a04d'
-    roundRect(0, 0, width, 18, 5); ctx.fill()
-    ctx.fillStyle = '#b7792c'
-    const pitch = 24
-    for(let x = 0; x < width; x += pitch){
-      ctx.beginPath(); ctx.moveTo(x + 2, 18); ctx.lineTo(x + pitch * .5, height); ctx.lineTo(x + pitch - 2, 18); ctx.closePath(); ctx.fill()
-    }
+    drawLevel1MeshedRack(width, height, RACK_TOOTH_PHASE)
   }
 
   function drawLampMachine(t){
@@ -1084,12 +1085,67 @@
     })
   }
 
+
+  function drawDebugMesh(){
+    if(!DEBUG_MESH || mode !== 'solve') return
+    const target = getGear('target')
+    ctx.save()
+    ctx.lineWidth = 2
+    gears.filter(g => !g.stock).forEach(g => {
+      ctx.strokeStyle = g.target ? 'rgba(236,111,174,.85)' : 'rgba(69,181,232,.75)'
+      ctx.setLineDash([8, 6])
+      ctx.beginPath(); ctx.arc(g.x, g.y, g.pitchRadius, 0, TWO_PI); ctx.stroke()
+      ctx.setLineDash([])
+      ctx.fillStyle = 'rgba(255,255,255,.9)'
+      ctx.beginPath(); ctx.arc(g.x, g.y, 4, 0, TWO_PI); ctx.fill()
+    })
+
+    links.forEach(link => {
+      const a = getGear(link.a)
+      const b = getGear(link.b)
+      if(!a || !b) return
+      const valid = isValidLink(a, b)
+      const angle = Math.atan2(b.y - a.y, b.x - a.x)
+      const contact = {
+        x: a.x + Math.cos(angle) * a.pitchRadius,
+        y: a.y + Math.sin(angle) * a.pitchRadius
+      }
+      ctx.strokeStyle = valid ? 'rgba(67,190,95,.9)' : 'rgba(229,62,62,.9)'
+      ctx.lineWidth = 3
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke()
+      ctx.fillStyle = valid ? '#43be5f' : '#e53e3e'
+      ctx.beginPath(); ctx.arc(contact.x, contact.y, 6, 0, TWO_PI); ctx.fill()
+    })
+
+    const pitchY = rackPitchLineY()
+    ctx.strokeStyle = 'rgba(255,214,77,.95)'
+    ctx.lineWidth = 3
+    ctx.setLineDash([10, 7])
+    ctx.beginPath(); ctx.moveTo(rackXForProgress(), pitchY); ctx.lineTo(rackXForProgress() + LEVEL_1_DOOR.rackW, pitchY); ctx.stroke()
+    ctx.setLineDash([])
+
+    if(target){
+      const contact = { x: target.x, y: pitchY }
+      const rackSpace = target.x - rackXForProgress() + (target.angle + Math.PI / 2) * target.pitchRadius
+      const gapError = Math.abs(normAngle((rackSpace - rackGapPhase()) / TOOTH_PITCH * TWO_PI)) / TWO_PI * TOOTH_PITCH
+      const validRackMesh = Math.abs(target.y - target.pitchRadius - pitchY) < 0.01 && gapError < 0.75
+      ctx.fillStyle = validRackMesh ? '#43be5f' : '#e53e3e'
+      ctx.beginPath(); ctx.arc(contact.x, contact.y, 7, 0, TWO_PI); ctx.fill()
+      ctx.font = '800 16px ui-rounded, system-ui, sans-serif'
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'bottom'
+      ctx.fillText(validRackMesh ? 'rack mesh OK' : 'rack mesh check', contact.x + 12, contact.y - 8)
+    }
+    ctx.restore()
+  }
+
   function render(dt){
     if(mode === 'solve'){
       drawMachine()
       drawRobot({ large: true })
       gears.filter(g => !g.stock).forEach(drawGear)
       drawLevel1RackAndBrackets()
+      drawDebugMesh()
       drawStockTray()
       gears.filter(g => g.stock).forEach(drawGear)
     } else {
