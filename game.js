@@ -23,7 +23,7 @@
   const LINK_DISTANCE_TOLERANCE = 12
   const GEAR_TO_GEAR_PHASE_OFFSET = 0.5
   const GEAR_TO_GEAR_PHASE_TOLERANCE = 0.08
-  const LEVEL_1_AXLE_SNAP_TOLERANCE = 76
+  const LEVEL_1_SLOT_SNAP_TOLERANCE = 82
   const VISUAL_COLLISION_PADDING = 2
   const CONTACT_LINE_PADDING = 4
   const START_SPEED = 0.34
@@ -45,8 +45,10 @@
   const LEVEL_1_GREEN_PHASE = -0.0959964650095051
   const LEVEL_1_BLUE_PHASE = -0.2243994752564138
   const LEVEL_1_TARGET_PHASE = 0.037399912542735336
-  const LEVEL_1_AXLES = [
-    { id: 'middleAxle', x: 594.9883422839321, y: 362.5556000393827, accepts: 'blue' }
+  const LEVEL_1_SLOTS = [
+    { id: 'greenLowerSlot', x: 591.1644259864302, y: 466.4998997334269, phase: -0.10036146621439901, connectedToGreen: true, connectedToPink: false },
+    { id: 'greenSideSlot', x: 424.27527498428594, y: 535.6276494914464, phase: 0.2050711528846082, connectedToGreen: true, connectedToPink: false },
+    { id: 'chainSlot', x: 594.9883422839321, y: 362.5556000393827, phase: LEVEL_1_BLUE_PHASE, connectedToGreen: true, connectedToPink: true }
   ]
 
   const SOLVE_LEVEL_1 = {
@@ -147,6 +149,7 @@
       parentGearId: opts.parentGearId || null,
       acceptsAxle: opts.acceptsAxle || null,
       lockedToAxle: !!opts.lockedToAxle,
+      lockedSlotId: opts.lockedSlotId || null,
       pulse: 0,
       ...radii
     }
@@ -349,7 +352,10 @@
 
   function disconnectGear(gear){
     if(!gear || gear.driver || gear.fixed) return
-    if(mode === 'solve') gear.lockedToAxle = false
+    if(mode === 'solve'){
+      gear.lockedToAxle = false
+      gear.lockedSlotId = null
+    }
     removeLinksForGear(gear.id)
     gear.speed = 0
     propagateRotation()
@@ -525,16 +531,13 @@
     const blue = gears.find(g => isLevel1BlueGear(g))
     const start = getGear('start')
     const target = getGear('target')
-    if(!blue?.lockedToAxle || !start || !target) return []
+    const slot = LEVEL_1_SLOTS.find(item => item.id === blue?.lockedSlotId)
+    if(!blue?.lockedToAxle || !slot || !start || !target) return []
 
-    return [
-      { a:start.id, b:blue.id, error:gearLinkDistanceError(start, blue) },
-      { a:blue.id, b:target.id, error:gearLinkDistanceError(blue, target) }
-    ].filter(link => {
-      const a = getGear(link.a)
-      const b = getGear(link.b)
-      return a && b && link.error <= LINK_DISTANCE_TOLERANCE && gearMeshPhaseFits(a, b)
-    })
+    const candidates = []
+    if(slot.connectedToGreen) candidates.push({ a:start.id, b:blue.id, error:gearLinkDistanceError(start, blue) })
+    if(slot.connectedToPink) candidates.push({ a:blue.id, b:target.id, error:gearLinkDistanceError(blue, target) })
+    return candidates
   }
 
   function buildSolveConstraintGraph({ applyAngles = false } = {}){
@@ -642,15 +645,22 @@
   }
 
   function trySnapSolve(gear){
-    const snapped = snapToLevel1Axle(gear)
+    const snapped = snapToLevel1Slot(gear)
     checkSolveState()
     return snapped
   }
 
-  function snapToLevel1Axle(gear){
+  function closestLevel1Slot(gear){
+    return LEVEL_1_SLOTS
+      .map(slot => ({ slot, distance:Math.hypot(gear.x - slot.x, gear.y - slot.y) }))
+      .filter(candidate => candidate.distance <= LEVEL_1_SLOT_SNAP_TOLERANCE)
+      .sort((a, b) => a.distance - b.distance)[0]?.slot || null
+  }
+
+  function snapToLevel1Slot(gear){
     if(!isLevel1BlueGear(gear)) return false
-    const axle = LEVEL_1_AXLES.find(item => item.accepts === gear.acceptsAxle)
-    if(!axle || Math.hypot(gear.x - axle.x, gear.y - axle.y) > LEVEL_1_AXLE_SNAP_TOLERANCE) return false
+    const slot = closestLevel1Slot(gear)
+    if(!slot) return false
 
     removeLinksForGear(gear.id)
     const start = getGear('start')
@@ -662,11 +672,12 @@
     }
     gear.stock = false
     gear.lockedToAxle = true
-    gear.x = axle.x
-    gear.y = axle.y
-    gear.angle = LEVEL_1_BLUE_PHASE
-    if(start) addGearLink(start, gear)
-    if(target) addGearLink(gear, target)
+    gear.lockedSlotId = slot.id
+    gear.x = slot.x
+    gear.y = slot.y
+    gear.angle = slot.phase
+    if(slot.connectedToGreen && start) addGearLink(start, gear)
+    if(slot.connectedToPink && target) addGearLink(gear, target)
     buildSolveConstraintGraph({ applyAngles:false })
     propagateRotation()
     popClick(gear.x, gear.y, gear)
@@ -967,6 +978,7 @@
     removeLinksForGear(gear.id)
     gear.stock = false
     gear.lockedToAxle = false
+    gear.lockedSlotId = null
     gear.speed = 0
     rebuildSolveLinks()
   }
@@ -976,6 +988,7 @@
     removeLinksForGear(gear.id)
     gear.stock = true
     gear.lockedToAxle = false
+    gear.lockedSlotId = null
     gear.x = gear.homeX
     gear.y = gear.homeY
     gear.speed = 0
@@ -1297,28 +1310,36 @@
 
   function drawMachine(){
     drawDoorMachineBase(doorProgress)
-    drawLevel1Axles()
+    drawLevel1Slots()
   }
 
-  function drawLevel1Axles(){
+  function drawLevel1Slots(){
     if(mode !== 'solve') return
-    LEVEL_1_AXLES.forEach(axle => {
-      const occupied = gears.some(g => g.lockedToAxle && g.acceptsAxle === axle.accepts)
+    const blueTemplate = gears.find(g => isLevel1BlueGear(g)) || makeGear('slot-template', 0, 0, 12, '#4fb5e8')
+    LEVEL_1_SLOTS.forEach(slot => {
+      const occupied = gears.some(g => g.lockedSlotId === slot.id)
+      const slotGear = { ...blueTemplate, x:0, y:0, angle:slot.phase, stock:false, pulse:0 }
+      const path = buildGearPath(slotGear)
       ctx.save()
-      ctx.translate(axle.x, axle.y)
-      ctx.globalAlpha = occupied ? .32 : .88
-      ctx.lineWidth = occupied ? 4 : 7
-      ctx.strokeStyle = occupied ? 'rgba(65,72,82,.35)' : 'rgba(255,255,255,.92)'
-      ctx.fillStyle = occupied ? 'rgba(255,255,255,.18)' : 'rgba(255,246,207,.46)'
-      ctx.shadowColor = occupied ? 'transparent' : 'rgba(255,247,168,.55)'
-      ctx.shadowBlur = occupied ? 0 : 14
-      ctx.beginPath(); ctx.arc(0, 0, 38, 0, TWO_PI); ctx.fill(); ctx.stroke()
+      ctx.translate(slot.x, slot.y)
+      ctx.globalAlpha = occupied ? .26 : .62
+      ctx.shadowColor = occupied ? 'transparent' : 'rgba(255,247,168,.42)'
+      ctx.shadowBlur = occupied ? 0 : 18
+      ctx.fillStyle = slot.connectedToPink ? 'rgba(236,111,174,.16)' : 'rgba(79,181,232,.14)'
+      ctx.strokeStyle = slot.connectedToPink ? 'rgba(236,111,174,.72)' : 'rgba(255,255,255,.78)'
+      ctx.lineWidth = slot.connectedToPink ? 6 : 5
+      ctx.setLineDash(slot.connectedToPink ? [] : [13, 10])
+      ctx.fill(path)
+      ctx.stroke(path)
+      ctx.setLineDash([])
       ctx.shadowColor = 'transparent'
-      ctx.lineWidth = 5
-      ctx.strokeStyle = 'rgba(88,62,38,.38)'
-      ctx.beginPath(); ctx.arc(0, 0, 17, 0, TWO_PI); ctx.stroke()
-      ctx.fillStyle = 'rgba(88,62,38,.42)'
-      ctx.beginPath(); ctx.arc(0, 0, 6, 0, TWO_PI); ctx.fill()
+      ctx.lineWidth = 3
+      ctx.strokeStyle = 'rgba(88,62,38,.30)'
+      ctx.beginPath(); ctx.arc(0, 0, slotGear.boreRadius, 0, TWO_PI); ctx.stroke()
+      if(slot.connectedToPink){
+        ctx.fillStyle = 'rgba(236,111,174,.76)'
+        ctx.beginPath(); ctx.arc(0, 0, 7, 0, TWO_PI); ctx.fill()
+      }
       ctx.restore()
     })
   }
