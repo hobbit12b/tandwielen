@@ -46,9 +46,36 @@
   const LEVEL_1_BLUE_PHASE = -0.2243994752564138
   const LEVEL_1_TARGET_PHASE = 0.037399912542735336
   const LEVEL_1_SLOTS = [
-    { id: 'greenLowerSlot', x: 591.1644259864302, y: 466.4998997334269, phase: -0.10036146621439901, connectedToGreen: true, connectedToPink: false },
-    { id: 'greenSideSlot', x: 424.27527498428594, y: 535.6276494914464, phase: 0.2050711528846082, connectedToGreen: true, connectedToPink: false },
-    { id: 'chainSlot', x: 594.9883422839321, y: 362.5556000393827, phase: LEVEL_1_BLUE_PHASE, connectedToGreen: true, connectedToPink: true }
+    {
+      id: 'greenOnly',
+      label: 'groen',
+      x: 592.0709993999253,
+      y: 464.5135570295299,
+      phase: -0.09219530971510803,
+      connectsGreen: true,
+      connectsPink: false,
+      result: 'partial'
+    },
+    {
+      id: 'solution',
+      label: 'oplossing',
+      x: 594.9883422839321,
+      y: 362.5556000393827,
+      phase: LEVEL_1_BLUE_PHASE,
+      connectsGreen: true,
+      connectsPink: true,
+      result: 'success'
+    },
+    {
+      id: 'pinkOnly',
+      label: 'roze',
+      x: 728.2556769925859,
+      y: 343.73877253569674,
+      phase: LEVEL_1_BLUE_PHASE,
+      connectsGreen: false,
+      connectsPink: true,
+      result: 'unpowered'
+    }
   ]
 
   const SOLVE_LEVEL_1 = {
@@ -150,6 +177,8 @@
       acceptsAxle: opts.acceptsAxle || null,
       lockedToAxle: !!opts.lockedToAxle,
       lockedSlotId: opts.lockedSlotId || null,
+      lockedToSlot: !!opts.lockedToSlot,
+      currentSlot: opts.currentSlot || null,
       pulse: 0,
       ...radii
     }
@@ -255,7 +284,7 @@
   }
 
   function level1StockPosition(index){
-    return { x: 235 + index * 92, y: 570 }
+    return { x: 340 + index * 92, y: 570 }
   }
 
   function getGear(id){ return gears.find(g => g.id === id) }
@@ -355,6 +384,8 @@
     if(mode === 'solve'){
       gear.lockedToAxle = false
       gear.lockedSlotId = null
+      gear.lockedToSlot = false
+      gear.currentSlot = null
     }
     removeLinksForGear(gear.id)
     gear.speed = 0
@@ -532,11 +563,11 @@
     const start = getGear('start')
     const target = getGear('target')
     const slot = LEVEL_1_SLOTS.find(item => item.id === blue?.lockedSlotId)
-    if(!blue?.lockedToAxle || !slot || !start || !target) return []
+    if(!blue?.lockedToSlot || !slot || !start || !target) return []
 
     const candidates = []
-    if(slot.connectedToGreen) candidates.push({ a:start.id, b:blue.id, error:gearLinkDistanceError(start, blue) })
-    if(slot.connectedToPink) candidates.push({ a:blue.id, b:target.id, error:gearLinkDistanceError(blue, target) })
+    if(slot.connectsGreen) candidates.push({ a:start.id, b:blue.id, error:gearLinkDistanceError(start, blue) })
+    if(slot.connectsPink) candidates.push({ a:blue.id, b:target.id, error:gearLinkDistanceError(blue, target) })
     return candidates
   }
 
@@ -673,11 +704,13 @@
     gear.stock = false
     gear.lockedToAxle = true
     gear.lockedSlotId = slot.id
+    gear.lockedToSlot = true
+    gear.currentSlot = slot.id
     gear.x = slot.x
     gear.y = slot.y
     gear.angle = slot.phase
-    if(slot.connectedToGreen && start) addGearLink(start, gear)
-    if(slot.connectedToPink && target) addGearLink(gear, target)
+    if(slot.connectsGreen && start) addGearLink(start, gear)
+    if(slot.connectsPink && target) addGearLink(gear, target)
     buildSolveConstraintGraph({ applyAngles:false })
     propagateRotation()
     popClick(gear.x, gear.y, gear)
@@ -979,6 +1012,8 @@
     gear.stock = false
     gear.lockedToAxle = false
     gear.lockedSlotId = null
+    gear.lockedToSlot = false
+    gear.currentSlot = null
     gear.speed = 0
     rebuildSolveLinks()
   }
@@ -989,6 +1024,8 @@
     gear.stock = true
     gear.lockedToAxle = false
     gear.lockedSlotId = null
+    gear.lockedToSlot = false
+    gear.currentSlot = null
     gear.x = gear.homeX
     gear.y = gear.homeY
     gear.speed = 0
@@ -1320,26 +1357,32 @@
       const occupied = gears.some(g => g.lockedSlotId === slot.id)
       const slotGear = { ...blueTemplate, x:0, y:0, angle:slot.phase, stock:false, pulse:0 }
       const path = buildGearPath(slotGear)
+      const baseAlpha = occupied ? .12 : .24
+
       ctx.save()
       ctx.translate(slot.x, slot.y)
-      ctx.globalAlpha = occupied ? .26 : .62
-      ctx.shadowColor = occupied ? 'transparent' : 'rgba(255,247,168,.42)'
-      ctx.shadowBlur = occupied ? 0 : 18
-      ctx.fillStyle = slot.connectedToPink ? 'rgba(236,111,174,.16)' : 'rgba(79,181,232,.14)'
-      ctx.strokeStyle = slot.connectedToPink ? 'rgba(236,111,174,.72)' : 'rgba(255,255,255,.78)'
-      ctx.lineWidth = slot.connectedToPink ? 6 : 5
-      ctx.setLineDash(slot.connectedToPink ? [] : [13, 10])
+      ctx.shadowColor = 'rgba(92,125,148,.28)'
+      ctx.shadowBlur = occupied ? 8 : 18
+      ctx.fillStyle = `rgba(94, 130, 154, ${baseAlpha})`
       ctx.fill(path)
-      ctx.stroke(path)
-      ctx.setLineDash([])
       ctx.shadowColor = 'transparent'
-      ctx.lineWidth = 3
-      ctx.strokeStyle = 'rgba(88,62,38,.30)'
-      ctx.beginPath(); ctx.arc(0, 0, slotGear.boreRadius, 0, TWO_PI); ctx.stroke()
-      if(slot.connectedToPink){
-        ctx.fillStyle = 'rgba(236,111,174,.76)'
-        ctx.beginPath(); ctx.arc(0, 0, 7, 0, TWO_PI); ctx.fill()
-      }
+
+      ctx.save()
+      ctx.globalAlpha = occupied ? .10 : .18
+      ctx.filter = 'blur(5px)'
+      ctx.scale(1.045, 1.045)
+      ctx.fillStyle = '#8aa4b6'
+      ctx.fill(path)
+      ctx.restore()
+
+      ctx.save()
+      ctx.globalAlpha = occupied ? .06 : .10
+      ctx.filter = 'blur(10px)'
+      ctx.scale(1.10, 1.10)
+      ctx.fillStyle = '#b7c8d4'
+      ctx.fill(path)
+      ctx.restore()
+
       ctx.restore()
     })
   }
@@ -1705,9 +1748,7 @@
     const moving = mode === 'solve' && target && isSolveChainComplete()
     const previousProgress = doorProgress
     if(moving){
-      if(typeof target.rackBaseAngle !== 'number') target.rackBaseAngle = target.angle
-      const rackX = LEVEL_1_DOOR.rackClosedX + (target.angle - target.rackBaseAngle) * target.pitchRadius
-      doorProgress = clamp((LEVEL_1_DOOR.rackClosedX - rackX) / LEVEL_1_RACK_TRAVEL, 0, 1)
+      doorProgress = clamp(doorProgress - target.speed * target.pitchRadius / LEVEL_1_RACK_TRAVEL * dt, 0, 1)
     } else {
       doorProgress = clamp(doorProgress - dt * .55, 0, 1)
     }
