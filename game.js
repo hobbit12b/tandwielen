@@ -69,6 +69,7 @@
     frameOverlay: { x: 764, y: 88, w: 292, h: 492, openingX: 806, openingY: 135, openingW: 226, openingH: 430 }
   }
 
+  let buildingLevel1SolutionChain = false
   const LEVEL_1_SOLUTION_CHAIN = buildLevel1SolutionChain()
   const LEVEL_1_SLOTS = buildLevel1Slots()
 
@@ -162,22 +163,27 @@
   }
 
   function buildLevel1SolutionChain(){
-    const rack = buildLevel1RackReference()
-    const pink = buildLevel1PinkFromRack(rack)
-    const blue = buildLevel1Gear('blue-slot', 552, 307, 12, 0)
-    blue.angle = meshedGearAngleFor(pink, pink.angle, blue, blue.angle)
+    buildingLevel1SolutionChain = true
+    try {
+      const rack = buildLevel1RackReference()
+      const pink = buildLevel1PinkFromRack(rack)
+      const blue = buildLevel1Gear('blue-slot', 552, 307, 12, 0)
+      blue.angle = meshedGearAngleFor(pink, pink.angle, blue, blue.angle)
 
-    const greenTemplate = buildLevel1Gear('start', 0, 0, 18, 0, { fixed:true, driver:true })
-    const greenAngleFromBlue = 2.553
-    const greenDistance = meshDistance(greenTemplate, blue)
-    const green = {
-      ...greenTemplate,
-      x: blue.x + Math.cos(greenAngleFromBlue) * greenDistance,
-      y: blue.y + Math.sin(greenAngleFromBlue) * greenDistance
+      const greenTemplate = buildLevel1Gear('start', 0, 0, 18, 0, { fixed:true, driver:true })
+      const greenAngleFromBlue = 2.553
+      const greenDistance = meshDistance(greenTemplate, blue)
+      const green = {
+        ...greenTemplate,
+        x: blue.x + Math.cos(greenAngleFromBlue) * greenDistance,
+        y: blue.y + Math.sin(greenAngleFromBlue) * greenDistance
+      }
+      green.angle = meshedGearAngleFor(blue, blue.angle, green, green.angle)
+
+      return { rack, pink, blue, green }
+    } finally {
+      buildingLevel1SolutionChain = false
     }
-    green.angle = meshedGearAngleFor(blue, blue.angle, green, green.angle)
-
-    return { rack, pink, blue, green }
   }
 
   function buildLevel1RackReference(){
@@ -585,6 +591,7 @@
   function showMenu(){
     mode = 'menu'
     drag = null
+    canvas.style.pointerEvents = 'none'
     mainMenu.hidden = false
     gameHud.hidden = true
     levelBadge.hidden = true
@@ -599,6 +606,7 @@
 
   function startDiscover(){
     mode = 'discover'
+    canvas.style.pointerEvents = 'auto'
     mainMenu.hidden = true
     gameHud.hidden = false
     levelBadge.hidden = true
@@ -610,6 +618,7 @@
   function startSolveLevel1(){
     mode = 'solve'
     solveLevelIndex = 0
+    canvas.style.pointerEvents = 'auto'
     mainMenu.hidden = true
     gameHud.hidden = true
     levelBadge.hidden = true
@@ -1132,7 +1141,7 @@
   }
 
   function gearPairPhaseOffset(anchorGear, childGear){
-    if(isLevel1GreenSolutionPair(anchorGear, childGear) && isLevel1SolutionGreenBluePlacement(anchorGear, childGear)){
+    if(!buildingLevel1SolutionChain && isLevel1GreenSolutionPair(anchorGear, childGear) && isLevel1SolutionGreenBluePlacement(anchorGear, childGear)){
       const greenPitch = TWO_PI / 18
       return modulo(GEAR_TO_GEAR_PHASE_OFFSET - LEVEL_1_GREEN_PHASE / greenPitch, 1)
     }
@@ -2328,8 +2337,27 @@
     }, 700)
   }
 
-  menuDiscoverBtn.addEventListener('click', startDiscover)
-  menuSolveBtn.addEventListener('click', startSolveLevel1)
+  function bindMenuButton(button, handler){
+    let lastPointerActivation = 0
+    const activate = (evt) => {
+      if(mainMenu.hidden || button.disabled) return
+      if(evt.type === 'pointerup'){
+        if(!evt.isPrimary || (evt.pointerType === 'mouse' && evt.button !== 0)) return
+        lastPointerActivation = performance.now()
+      } else if(performance.now() - lastPointerActivation < 500){
+        evt.preventDefault()
+        return
+      }
+      evt.preventDefault()
+      evt.stopPropagation()
+      handler()
+    }
+    button.addEventListener('pointerup', activate)
+    button.addEventListener('click', activate)
+  }
+
+  bindMenuButton(menuDiscoverBtn, startDiscover)
+  bindMenuButton(menuSolveBtn, startSolveLevel1)
   backBtn.addEventListener('click', showMenu)
   resetBtn.addEventListener('click', resetSolveLevel1)
   nextBtn.addEventListener('click', () => {
