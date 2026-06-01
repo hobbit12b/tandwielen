@@ -36,6 +36,7 @@
   const TWO_PI = Math.PI * 2
   const LEVEL_1_BLUE_SLOT_MARGIN = 28
   const LEVEL_1_GREEN_PHASE = (TWO_PI / 18) * 0.5
+  const LEVEL_1_SOLVED_EPSILON = 0.0001
 
   const DISCOVER_GEAR_VARIANTS = [
     { teeth: 10, color: '#4fb5e8', accent: '#d9f5ff' },
@@ -315,7 +316,7 @@
 
     const extraCandidates = [
       { id:'greenOnly', label:'groen', type:'greenOnly', anchorName:'green', desiredAngles:[0.42, 2.2, -0.9], result:'partial' },
-      { id:'pinkOnly', label:'roze', type:'pinkOnly', anchorName:'pink', desiredAngles:[0.45, 0.58, 1.9, 2.5], result:'unpowered' }
+      { id:'pinkOnly', label:'roze', type:'pinkOnly', anchorName:'pink', desiredAngles:[-0.82, -0.62, 0.45, 0.58, 1.9, 2.5], result:'unpowered' }
     ]
 
     extraCandidates.forEach(candidate => {
@@ -591,7 +592,7 @@
     feedback.classList.remove('show')
     const solvedGreen = LEVEL_1_SOLUTION_CHAIN.green
     const solvedPink = LEVEL_1_SOLUTION_CHAIN.pink
-    const start = makeGear('start', solvedGreen.x, solvedGreen.y, solvedGreen.teeth, '#59c765', { fixed:true, driver:true, speed:-START_SPEED, accent:'#dff6a8', angle:solvedGreen.angle })
+    const start = makeGear('start', solvedGreen.x, solvedGreen.y, solvedGreen.teeth, '#59c765', { fixed:true, driver:true, speed:0, accent:'#dff6a8', angle:solvedGreen.angle })
     const target = makeGear('target', solvedPink.x, solvedPink.y, solvedPink.teeth, '#ec6fae', { fixed:true, target:true, accent:'#ffd8eb', angle: solvedPink.angle })
     gears = [start, target]
     target.rackBaseAngle = target.angle
@@ -725,6 +726,8 @@
   function disconnectGear(gear){
     if(!gear || gear.driver || gear.fixed) return
     if(mode === 'solve'){
+      const start = getGear('start')
+      if(start && isLevel1BlueGear(gear)) start.speed = 0
       gear.lockedToAxle = false
       gear.lockedSlotId = null
       gear.lockedToSlot = false
@@ -1073,7 +1076,7 @@
   }
 
   function gearPairPhaseOffset(anchorGear, childGear){
-    if(isLevel1GreenSolutionPair(anchorGear, childGear)){
+    if(isLevel1GreenSolutionPair(anchorGear, childGear) && isLevel1SolutionGreenBluePlacement(anchorGear, childGear)){
       const greenPitch = TWO_PI / 18
       return modulo(GEAR_TO_GEAR_PHASE_OFFSET - LEVEL_1_GREEN_PHASE / greenPitch, 1)
     }
@@ -1083,6 +1086,14 @@
   function isLevel1GreenSolutionPair(a, b){
     return (isLevel1GreenGear(a) && isLevel1BlueSlotGear(b)) ||
       (isLevel1GreenGear(b) && isLevel1BlueSlotGear(a))
+  }
+
+  function isLevel1SolutionGreenBluePlacement(a, b){
+    const green = isLevel1GreenGear(a) ? a : isLevel1GreenGear(b) ? b : null
+    const blue = isLevel1BlueSlotGear(a) ? a : isLevel1BlueSlotGear(b) ? b : null
+    if(!green || !blue) return false
+    return Math.abs(green.x - 470) < 0.1 && Math.abs(green.y - 410) < 0.1 &&
+      blue.x > green.x && blue.y < green.y
   }
 
   function isLevel1GreenGear(gear){
@@ -1189,6 +1200,7 @@
     gear.lockedToSlot = true
     gear.currentSlot = slot.id
     alignSlotGears(slot, gear)
+    if(start) start.speed = slot.id === 'solution' ? -START_SPEED : 0
     if(slot.connectsGreen && start) addGearLink(start, gear)
     if(slot.connectsPink && target) addGearLink(gear, target)
     buildSolveConstraintGraph({ applyAngles:false })
@@ -1520,16 +1532,15 @@
 
   function isSolveChainComplete(){
     const target = getGear('target')
-    if(!target || !isTargetGearPowered()) return false
-    const green = getGear('start')
     const blue = gears.find(g => isLevel1BlueGear(g))
-    if(!blue?.lockedToAxle || !drivenGearIds().has(target.id)) return false
-    return validateSolutionChain({ green, blue, pink: target }).ok === true
+    if(blue?.currentSlot !== 'solution' || !blue.lockedToSlot || !blue.lockedToAxle) return false
+    if(!target || !isTargetGearPowered()) return false
+    return drivenGearIds().has(target.id)
   }
 
   function checkSolveState(){
     if(mode !== 'solve') return
-    const solved = isSolveChainComplete()
+    const solved = isSolveChainComplete() && doorProgress >= 1 - LEVEL_1_SOLVED_EPSILON
     if(solved && !levelComplete){
       levelComplete = true
       showFeedback('Gelukt!')
@@ -2253,6 +2264,7 @@
 
   function update(dt){
     updateSolveMachine(dt)
+    checkSolveState()
     gears.forEach(g => {
       const rotationSpeed = mode === 'solve' ? g.rotationSpeed : g.speed
       if(!drag || drag.id !== g.id) g.angle += rotationSpeed * dt
