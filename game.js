@@ -19,10 +19,14 @@
   const RACK_BODY_H = 19
   const RACK_TOOTH_PHASE = 0
   const DEBUG_MESH = false
+  const DEBUG_SLOT_VALIDATION = false
   const SNAP_TOLERANCE = 72
   const LINK_DISTANCE_TOLERANCE = 12
   const GEAR_TO_GEAR_PHASE_OFFSET = 0.5
   const GEAR_TO_GEAR_PHASE_TOLERANCE = 0.08
+  const STRICT_SLOT_DISTANCE_TOLERANCE = 0.01
+  const STRICT_SLOT_PHASE_TOLERANCE = 0.002
+  const STRICT_SLOT_RACK_GAP_TOLERANCE = 0.01
   const LEVEL_1_SLOT_SNAP_TOLERANCE = 82
   const VISUAL_COLLISION_PADDING = 2
   const CONTACT_LINE_PADDING = 4
@@ -699,18 +703,123 @@
       .sort((a, b) => a.distance - b.distance)[0]?.slot || null
   }
 
+  function slotCandidateGears(slot, blueGear){
+    const start = getGear('start')
+    const target = getGear('target')
+    const bluePhase = slot.bluePhase ?? slot.phase
+    return {
+      green: start ? { ...start, angle: slot.greenPhase ?? start.angle } : null,
+      blue: blueGear ? { ...blueGear, stock:false, x:slot.x, y:slot.y, angle:bluePhase } : null,
+      pink: target ? { ...target, angle: slot.pinkPhase ?? target.angle } : null,
+      phases: {
+        greenPhase: slot.greenPhase ?? start?.angle ?? null,
+        bluePhase,
+        pinkPhase: slot.pinkPhase ?? target?.angle ?? null
+      }
+    }
+  }
+
+  function strictGearContactState(anchor, child, ignoredGearIds = []){
+    if(!anchor || !child) return { ok:false, reason:'missing gear' }
+    const ignored = Array.from(new Set([anchor.id, child.id, ...ignoredGearIds]))
+    const distanceError = gearLinkDistanceError(anchor, child)
+    const phaseError = gearMeshPhaseError(anchor, child)
+    const blocked = isContactBlocked(anchor, child)
+    const overlaps = wouldOverlapAnyGear(anchor, ignored.filter(id => id !== anchor.id)) ||
+      wouldOverlapAnyGear(child, ignored.filter(id => id !== child.id))
+    const clearanceBlocked = violatesSolveRackClearance(anchor) || violatesSolveRackClearance(child)
+    const ok = distanceError <= STRICT_SLOT_DISTANCE_TOLERANCE &&
+      phaseError <= STRICT_SLOT_PHASE_TOLERANCE &&
+      !blocked &&
+      !overlaps &&
+      !clearanceBlocked
+    return { ok, distanceError, phaseError, blocked, overlaps, clearanceBlocked }
+  }
+
+  function gearMeshPhaseError(anchorGear, childGear){
+    const contactAngle = Math.atan2(childGear.y - anchorGear.y, childGear.x - anchorGear.x)
+    const anchorPhase = toothPhaseAt(anchorGear, contactAngle, anchorGear.angle)
+    const childPhase = toothPhaseAt(childGear, contactAngle + Math.PI, childGear.angle)
+    return phaseDistance(childPhase, anchorPhase + GEAR_TO_GEAR_PHASE_OFFSET)
+  }
+
+  function strictRackContactState(target){
+    if(!target) return { ok:false, reason:'missing target gear' }
+    const state = rackMeshState(target)
+    const ok = state.geometryValid &&
+      state.phaseError <= STRICT_SLOT_PHASE_TOLERANCE &&
+      state.gapError <= STRICT_SLOT_RACK_GAP_TOLERANCE
+    return { ok, ...state }
+  }
+
+  function logSlotValidation(slot, details){
+    if(!DEBUG_SLOT_VALIDATION) return
+    const reasons = []
+    if(details.greenBlue && !details.greenBlue.ok) reasons.push('green-blue afgekeurd')
+    if(details.bluePink && !details.bluePink.ok) reasons.push('blue-pink afgekeurd')
+    if(details.pinkRack && !details.pinkRack.ok) reasons.push('pink-rack afgekeurd')
+    console.log('[slot validation]', {
+      slot: slot?.id,
+      phases: details.phases,
+      greenBlueOk: details.greenBlue?.ok ?? 'not-required',
+      bluePinkOk: details.bluePink?.ok ?? 'not-required',
+      pinkRackOk: details.pinkRack?.ok ?? 'not-required',
+      overallOk: details.overallOk,
+      reasons,
+      details
+    })
+  }
+
+  function validateSlotPlacement(slot, blueGear){
+    if(!slot || !isLevel1BlueGear(blueGear)){
+      const details = { overallOk:false, phases:null }
+      logSlotValidation(slot, details)
+      return false
+    }
+
+    const { green, blue, pink, phases } = slotCandidateGears(slot, blueGear)
+    const details = { phases }
+    const required = []
+    const requiredContactGearIds = [green, blue, pink]
+      .filter(contactGear => {
+        if(!contactGear) return false
+        if(contactGear.id === blue?.id) return true
+        if(slot.connectsGreen && contactGear.id === green?.id) return true
+        return slot.connectsPink && contactGear.id === pink?.id
+      })
+      .map(contactGear => contactGear.id)
+
+    if(slot.connectsGreen){
+      details.greenBlue = strictGearContactState(green, blue, requiredContactGearIds)
+      required.push(details.greenBlue.ok)
+    }
+    if(slot.connectsPink){
+      details.bluePink = strictGearContactState(blue, pink, requiredContactGearIds)
+      required.push(details.bluePink.ok)
+    }
+    if(slot.result === 'success'){
+      details.pinkRack = strictRackContactState(pink)
+      required.push(details.pinkRack.ok)
+    }
+
+    details.overallOk = required.length > 0 && required.every(Boolean)
+    logSlotValidation(slot, details)
+    return details.overallOk
+  }
+
   function alignSlotGears(slot, blueGear){
     if(!slot || !blueGear) return
     const start = getGear('start')
     const target = getGear('target')
+    const { phases } = slotCandidateGears(slot, blueGear)
 
     blueGear.x = slot.x
     blueGear.y = slot.y
-    blueGear.angle = slot.bluePhase ?? slot.phase
+    blueGear.angle = phases.bluePhase
 
-    if(start) start.angle = slot.greenPhase ?? meshedGearAngleFor(blueGear, blueGear.angle, start, start.angle)
+    if(start) start.angle = phases.greenPhase
     if(target){
-      target.angle = slot.pinkPhase ?? LEVEL_1_TARGET_PHASE
+      target.angle = phases.pinkPhase
       target.rackBaseAngle = target.angle
     }
   }
@@ -719,6 +828,7 @@
     if(!isLevel1BlueGear(gear)) return false
     const slot = closestLevel1Slot(gear)
     if(!slot) return false
+    if(!validateSlotPlacement(slot, gear)) return false
 
     removeLinksForGear(gear.id)
     const start = getGear('start')
