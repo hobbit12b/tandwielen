@@ -37,6 +37,12 @@
   const LEVEL_1_BLUE_SLOT_MARGIN = 28
   const LEVEL_1_GREEN_PHASE = (TWO_PI / 18) * 0.5
   const LEVEL_1_SOLVED_EPSILON = 0.0001
+  const LEVEL_1_SHADOW_ROTATIONS = {
+    lowerLeft: 0,
+    solution: 0,
+    rightMiddle: 0,
+    doorTop: 0
+  }
 
   const DISCOVER_GEAR_VARIANTS = [
     { teeth: 10, color: '#4fb5e8', accent: '#d9f5ff' },
@@ -327,7 +333,7 @@
 
   function buildLevel1Slots(){
     const { green, pink, blue } = buildLevel1SlotBaseGears()
-    const makeFixedSlot = ({ id, label, type, x, y, connectsGreen = false, connectsPink = false, result = 'unpowered', phase }) => ({
+    const makeFixedSlot = ({ id, label, type, x, y, connectsGreen = false, connectsPink = false, result = 'unpowered', phase, shadowRotation = LEVEL_1_SHADOW_ROTATIONS[id] }) => ({
       id,
       label,
       type,
@@ -335,6 +341,7 @@
       y,
       phase: phase ?? blue.angle,
       bluePhase: phase ?? blue.angle,
+      shadowRotation,
       greenPhase: green.angle,
       pinkPhase: pink.angle,
       connectsGreen,
@@ -1889,7 +1896,7 @@
     const blueTemplate = gears.find(g => isLevel1BlueGear(g)) || makeGear('slot-template', 0, 0, 12, '#4fb5e8')
     LEVEL_1_SLOTS.filter(slot => slot.overallOk === true).forEach(slot => {
       const occupied = gears.some(g => g.lockedSlotId === slot.id)
-      const slotGear = { ...blueTemplate, x:0, y:0, angle:slot.bluePhase ?? slot.phase, stock:false, pulse:0 }
+      const slotGear = { ...blueTemplate, x:0, y:0, angle:slot.shadowRotation ?? slot.bluePhase ?? slot.phase, stock:false, pulse:0 }
       const path = buildGearPath(slotGear)
       const baseAlpha = occupied ? .20 : .40
 
