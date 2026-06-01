@@ -34,6 +34,8 @@
   const START_SPEED = 0.34
   const MAX_DISCOVER_GEARS = 10
   const TWO_PI = Math.PI * 2
+  const LEVEL_1_BLUE_SLOT_MARGIN = 28
+  const LEVEL_1_GREEN_PHASE = (TWO_PI / 18) * 0.5
 
   const DISCOVER_GEAR_VARIANTS = [
     { teeth: 10, color: '#4fb5e8', accent: '#d9f5ff' },
@@ -222,7 +224,8 @@
       pinkPhase: pink.angle,
       connectsGreen,
       connectsPink,
-      result
+      result,
+      visualRadius: blue.outerRadius
     }
     const validation = evaluateLevel1SlotMesh(slot, { green, blue, pink })
     return { ...slot, ...validation }
@@ -278,19 +281,46 @@
     return slot
   }
 
+  function buildFirstNonOverlappingLevel1ExtraSlot(candidate, slots){
+    const desiredAngles = candidate.desiredAngles || [candidate.desiredAngle]
+    for(const desiredAngle of desiredAngles){
+      const slot = buildLevel1ExtraSlot({ ...candidate, desiredAngle })
+      if(!validateFullMesh(slot)) continue
+      if(!validateSlotDoesNotOverlapOtherSlots(slot, slots)){
+        debugLevel1SlotBuildReject(`extra slot ${candidate.id}`, { ...slot, reason:'overlapt met andere schaduwplek' })
+        continue
+      }
+      return slot
+    }
+    return null
+  }
+
+  function validateSlotDoesNotOverlapOtherSlots(slot, slots){
+    if(!slot) return false
+    return slots.every(other => {
+      if(!other || other.id === slot.id) return true
+      const minDistance = slotVisualRadius(slot) + slotVisualRadius(other) + LEVEL_1_BLUE_SLOT_MARGIN
+      return dist(slot, other) >= minDistance
+    })
+  }
+
+  function slotVisualRadius(slot){
+    return slot?.visualRadius || gearRadii(12).outerRadius
+  }
+
   function buildLevel1Slots(){
     const slots = []
     const solution = buildLevel1SolutionSlot()
     if(solution) slots.push(solution)
 
     const extraCandidates = [
-      { id:'greenOnly', label:'groen', type:'greenOnly', anchorName:'green', desiredAngle:0.42, result:'partial' },
-      { id:'pinkOnly', label:'roze', type:'pinkOnly', anchorName:'pink', desiredAngle:0.58, result:'unpowered' }
+      { id:'greenOnly', label:'groen', type:'greenOnly', anchorName:'green', desiredAngles:[0.42, 2.2, -0.9], result:'partial' },
+      { id:'pinkOnly', label:'roze', type:'pinkOnly', anchorName:'pink', desiredAngles:[0.45, 0.58, 1.9, 2.5], result:'unpowered' }
     ]
 
     extraCandidates.forEach(candidate => {
-      const slot = buildLevel1ExtraSlot(candidate)
-      if(validateFullMesh(slot)) slots.push(slot)
+      const slot = buildFirstNonOverlappingLevel1ExtraSlot(candidate, slots)
+      if(slot) slots.push(slot)
     })
 
     const validSlots = slots.filter(slot => slot.overallOk === true)
@@ -748,7 +778,7 @@
     const anchorPitch = TWO_PI / anchorGear.teeth
     const childPitch = TWO_PI / childGear.teeth
     const anchorContactPhase = modulo((contactAngle - anchorAngle) / anchorPitch, 1)
-    const childContactPhase = modulo(anchorContactPhase + GEAR_TO_GEAR_PHASE_OFFSET, 1)
+    const childContactPhase = modulo(anchorContactPhase + gearPairPhaseOffset(anchorGear, childGear), 1)
     const baseAngle = childContactAngle - childContactPhase * childPitch
     return nearestMultiple(baseAngle, childPitch, childAngle)
   }
@@ -765,7 +795,7 @@
     const contactAngle = Math.atan2(childGear.y - anchorGear.y, childGear.x - anchorGear.x)
     const anchorPhase = toothPhaseAt(anchorGear, contactAngle, anchorAngle)
     const childPhase = toothPhaseAt(childGear, contactAngle + Math.PI, childAngle)
-    return phaseDistance(childPhase, anchorPhase + GEAR_TO_GEAR_PHASE_OFFSET) < GEAR_TO_GEAR_PHASE_TOLERANCE
+    return phaseDistance(childPhase, anchorPhase + gearPairPhaseOffset(anchorGear, childGear)) < GEAR_TO_GEAR_PHASE_TOLERANCE
   }
 
   function gearMeshPhaseFits(anchorGear, childGear){
@@ -1039,7 +1069,28 @@
     const contactAngle = Math.atan2(childGear.y - anchorGear.y, childGear.x - anchorGear.x)
     const anchorPhase = toothPhaseAt(anchorGear, contactAngle, anchorGear.angle)
     const childPhase = toothPhaseAt(childGear, contactAngle + Math.PI, childGear.angle)
-    return phaseDistance(childPhase, anchorPhase + GEAR_TO_GEAR_PHASE_OFFSET)
+    return phaseDistance(childPhase, anchorPhase + gearPairPhaseOffset(anchorGear, childGear))
+  }
+
+  function gearPairPhaseOffset(anchorGear, childGear){
+    if(isLevel1GreenSolutionPair(anchorGear, childGear)){
+      const greenPitch = TWO_PI / 18
+      return modulo(GEAR_TO_GEAR_PHASE_OFFSET - LEVEL_1_GREEN_PHASE / greenPitch, 1)
+    }
+    return GEAR_TO_GEAR_PHASE_OFFSET
+  }
+
+  function isLevel1GreenSolutionPair(a, b){
+    return (isLevel1GreenGear(a) && isLevel1BlueSlotGear(b)) ||
+      (isLevel1GreenGear(b) && isLevel1BlueSlotGear(a))
+  }
+
+  function isLevel1GreenGear(gear){
+    return gear?.id === 'start' && gear?.teeth === 18
+  }
+
+  function isLevel1BlueSlotGear(gear){
+    return gear?.id === 'blue-slot' || gear?.acceptsAxle === 'blue'
   }
 
   function strictRackContactState(target){
