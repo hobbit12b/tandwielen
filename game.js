@@ -20,6 +20,7 @@
   const RACK_TOOTH_PHASE = 0
   const DEBUG_MESH = false
   const DEBUG_SLOT_VALIDATION = false
+  const DEBUG_SLOT_BUILD = false
   const SNAP_TOLERANCE = 72
   const LINK_DISTANCE_TOLERANCE = 12
   const GEAR_TO_GEAR_PHASE_OFFSET = 0.5
@@ -49,56 +50,6 @@
   const LEVEL_1_GREEN_PHASE = -0.0959964650095051
   const LEVEL_1_BLUE_PHASE = -0.2243994752564138
   const LEVEL_1_TARGET_PHASE = 0.037399912542735336
-  const LEVEL_1_SLOTS = [
-    {
-      id: 'greenOnly',
-      label: 'groen',
-      x: 592.0709993999253,
-      y: 464.5135570295299,
-      phase: -0.09219530971510803,
-      bluePhase: -0.09219530971510803,
-      greenPhase: LEVEL_1_GREEN_PHASE,
-      pinkPhase: LEVEL_1_TARGET_PHASE,
-      connectsGreen: true,
-      connectsPink: false,
-      result: 'partial'
-    },
-    {
-      id: 'solution',
-      label: 'oplossing',
-      x: 594.9883422839321,
-      y: 362.5556000393827,
-      phase: LEVEL_1_BLUE_PHASE,
-      bluePhase: LEVEL_1_BLUE_PHASE,
-      greenPhase: LEVEL_1_GREEN_PHASE,
-      pinkPhase: LEVEL_1_TARGET_PHASE,
-      connectsGreen: true,
-      connectsPink: true,
-      result: 'success'
-    },
-    {
-      id: 'pinkOnly',
-      label: 'roze',
-      x: 728.2556769925859,
-      y: 343.73877253569674,
-      phase: LEVEL_1_BLUE_PHASE,
-      bluePhase: LEVEL_1_BLUE_PHASE,
-      greenPhase: LEVEL_1_GREEN_PHASE,
-      pinkPhase: LEVEL_1_TARGET_PHASE,
-      connectsGreen: false,
-      connectsPink: true,
-      result: 'unpowered'
-    }
-  ]
-
-  const SOLVE_LEVEL_1 = {
-    name: 'Deur',
-    machine: 'door',
-    target: { x: 650, teeth: 12, angle: LEVEL_1_TARGET_PHASE },
-    stock: [
-      { teeth: 12, color: '#4fb5e8', accent: '#d9f5ff' }
-    ]
-  }
 
   const LEVEL_1_DOOR = {
     panelClosedX: 792,
@@ -115,6 +66,17 @@
       { x: 1002, y: 170, w: 34, h: 68 }
     ],
     frameOverlay: { x: 748, y: 88, w: 292, h: 492, openingX: 806, openingY: 138, openingW: 202, openingH: 430 }
+  }
+
+  const LEVEL_1_SLOTS = buildLevel1Slots()
+
+  const SOLVE_LEVEL_1 = {
+    name: 'Deur',
+    machine: 'door',
+    target: { x: 650, teeth: 12, angle: LEVEL_1_TARGET_PHASE },
+    stock: [
+      { teeth: 12, color: '#4fb5e8', accent: '#d9f5ff' }
+    ]
   }
 
   const assets = loadImages({
@@ -171,6 +133,268 @@
       rootRadius: pitchRadius - TOOTH_DEDENDUM,
       boreRadius: Math.max(18, pitchRadius * 0.23)
     }
+  }
+
+  function buildLevel1Gear(id, x, y, teeth, angle, opts = {}){
+    return {
+      id,
+      x,
+      y,
+      teeth,
+      angle,
+      stock: false,
+      target: false,
+      driver: false,
+      fixed: false,
+      ...gearRadii(teeth),
+      ...opts
+    }
+  }
+
+  function buildLevel1SlotBaseGears(){
+    const targetRadii = gearRadii(12)
+    const targetY = rackPitchLineY() + targetRadii.pitchRadius
+    return {
+      green: buildLevel1Gear('start', 470, 410, 18, LEVEL_1_GREEN_PHASE, { fixed:true, driver:true }),
+      pink: buildLevel1Gear('target', 650, targetY, 12, LEVEL_1_TARGET_PHASE, { fixed:true, target:true }),
+      blue: buildLevel1Gear('blue-slot', 0, 0, 12, LEVEL_1_BLUE_PHASE)
+    }
+  }
+
+  function buildSlotFromBlueGear({ id, label, type, blue, green, pink, connectsGreen, connectsPink, result }){
+    const slot = {
+      id,
+      label,
+      type,
+      x: blue.x,
+      y: blue.y,
+      phase: blue.angle,
+      bluePhase: blue.angle,
+      greenPhase: green.angle,
+      pinkPhase: pink.angle,
+      connectsGreen,
+      connectsPink,
+      result
+    }
+    const validation = evaluateLevel1SlotMesh(slot, { green, blue, pink })
+    return { ...slot, ...validation }
+  }
+
+  function buildLevel1SolutionSlot(){
+    const { green, pink, blue } = buildLevel1SlotBaseGears()
+    const points = circleIntersections(green, meshDistance(green, blue), pink, meshDistance(pink, blue))
+    let best = null
+
+    points.forEach((point, index) => {
+      const candidateBlue = { ...blue, x: point.x, y: point.y }
+      candidateBlue.angle = meshedGearAngleFor(green, green.angle, candidateBlue, LEVEL_1_BLUE_PHASE)
+      const slot = buildSlotFromBlueGear({
+        id: 'solution',
+        label: 'oplossing',
+        type: 'solution',
+        blue: candidateBlue,
+        green,
+        pink,
+        connectsGreen: true,
+        connectsPink: true,
+        result: 'success'
+      })
+      debugLevel1SlotBuild('solution kandidaat berekend', slot)
+      if(slot.overallOk && (!best || point.y > best.y)) best = slot
+      else if(!slot.overallOk) debugLevel1SlotBuildReject(`solution kandidaat ${index + 1}`, slot)
+    })
+
+    if(best) debugLevel1SlotBuild('solution-slot geldig', best)
+    else debugLevel1SlotBuildReject('solution-slot', { reason:'geen volledig geldige groen-blauw-roze-tandheugel ketting' })
+    return best
+  }
+
+  function buildLevel1ExtraSlot({ id, label, type, anchorName, desiredAngle, result }){
+    const { green, pink, blue } = buildLevel1SlotBaseGears()
+    const anchor = anchorName === 'green' ? green : pink
+    const blueGear = {
+      ...blue,
+      x: anchor.x + Math.cos(desiredAngle) * meshDistance(anchor, blue),
+      y: anchor.y + Math.sin(desiredAngle) * meshDistance(anchor, blue)
+    }
+    blueGear.angle = meshedGearAngleFor(anchor, anchor.angle, blueGear, LEVEL_1_BLUE_PHASE)
+
+    const slot = buildSlotFromBlueGear({
+      id,
+      label,
+      type,
+      blue: blueGear,
+      green,
+      pink,
+      connectsGreen: anchorName === 'green',
+      connectsPink: anchorName === 'pink',
+      result
+    })
+    if(slot.overallOk) debugLevel1SlotBuild('extra slot geldig', slot)
+    else debugLevel1SlotBuildReject(`extra slot ${id}`, slot)
+    return slot
+  }
+
+  function buildLevel1Slots(){
+    const slots = []
+    const solution = buildLevel1SolutionSlot()
+    if(solution) slots.push(solution)
+
+    const extraCandidates = [
+      { id:'greenOnly', label:'groen', type:'greenOnly', anchorName:'green', desiredAngle:0.42, result:'partial' },
+      { id:'pinkOnly', label:'roze', type:'pinkOnly', anchorName:'pink', desiredAngle:0.58, result:'unpowered' }
+    ]
+
+    extraCandidates.forEach(candidate => {
+      const slot = buildLevel1ExtraSlot(candidate)
+      if(validateFullMesh(slot)) slots.push(slot)
+    })
+
+    const validSlots = slots.filter(slot => slot.overallOk === true)
+    if(DEBUG_SLOT_BUILD){
+      console.log('[level 1 slot build] geldige slots', validSlots.map(slotDebugSummary))
+    }
+    return validSlots
+  }
+
+  function evaluateLevel1SlotMesh(slot, preparedGears = null){
+    const base = buildLevel1SlotBaseGears()
+    const gearsForSlot = preparedGears || {
+      green: { ...base.green, angle: slot.greenPhase ?? base.green.angle },
+      blue: { ...base.blue, x: slot.x, y: slot.y, angle: slot.bluePhase ?? slot.phase ?? base.blue.angle },
+      pink: { ...base.pink, angle: slot.pinkPhase ?? base.pink.angle }
+    }
+    const green = gearsForSlot.green
+    const blue = gearsForSlot.blue
+    const pink = gearsForSlot.pink
+    const greenBlueBlockers = slot.type === 'greenOnly' ? [pink] : []
+    const bluePinkBlockers = slot.type === 'pinkOnly' ? [green] : []
+    const greenBlue = strictGearContactStateForSlotBuild(green, blue, greenBlueBlockers)
+    const bluePink = strictGearContactStateForSlotBuild(blue, pink, bluePinkBlockers)
+    const pinkRack = strictRackContactStateForSlotBuild(pink)
+    const chainCanRotateOk = slot.type === 'solution'
+      ? greenBlue.ok && bluePink.ok && pinkRack.ok
+      : false
+    const doorCanOpenOk = slot.type === 'solution' ? chainCanRotateOk && pinkRack.ok : false
+    const overallOk = slot.type === 'solution'
+      ? greenBlue.ok && bluePink.ok && pinkRack.ok && chainCanRotateOk && doorCanOpenOk
+      : slot.type === 'greenOnly'
+        ? greenBlue.ok
+        : slot.type === 'pinkOnly'
+          ? bluePink.ok
+          : false
+
+    return {
+      greenBlueOk: greenBlue.ok,
+      bluePinkOk: bluePink.ok,
+      pinkRackOk: pinkRack.ok,
+      chainCanRotateOk,
+      doorCanOpenOk,
+      overallOk,
+      validationDetails: { greenBlue, bluePink, pinkRack }
+    }
+  }
+
+  function validateFullMesh(slot){
+    if(!slot) return false
+    const validation = evaluateLevel1SlotMesh(slot)
+    Object.assign(slot, validation)
+    return slot.overallOk === true
+  }
+
+  function strictGearContactStateForSlotBuild(anchor, child, otherGears = []){
+    if(!anchor || !child) return { ok:false, reason:'missing gear' }
+    const distanceError = gearLinkDistanceError(anchor, child)
+    const phaseError = gearMeshPhaseError(anchor, child)
+    const blocked = otherGears.some(other => other && contactLineBlockedByGear(anchor, child, other))
+    const overlaps = otherGears.some(other => other && gearsOverlapForSlotBuild(child, other))
+    const clearanceBlocked = !child.target && child.y < Math.max(108 + child.outerRadius, LEVEL_1_DOOR.rackY + LEVEL_1_DOOR.rackH + child.outerRadius + 28)
+    const ok = distanceError <= STRICT_SLOT_DISTANCE_TOLERANCE &&
+      phaseError <= STRICT_SLOT_PHASE_TOLERANCE &&
+      !blocked &&
+      !overlaps &&
+      !clearanceBlocked
+    return { ok, distanceError, phaseError, blocked, overlaps, clearanceBlocked }
+  }
+
+  function strictRackContactStateForSlotBuild(target){
+    if(!target) return { ok:false, reason:'missing target gear' }
+    const rackX = LEVEL_1_DOOR.rackClosedX
+    const pitchY = rackPitchLineY()
+    const wantedY = pitchY + target.pitchRadius
+    const insideRack = target.x >= rackX + TOOTH_PITCH && target.x <= rackX + LEVEL_1_DOOR.rackW - TOOTH_PITCH
+    const gapError = Math.abs(target.y - wantedY)
+    const gearTopPhase = toothPhaseAt(target, -Math.PI / 2, target.angle)
+    const rackPhase = modulo((target.x - rackX - RACK_TOOTH_PHASE) / TOOTH_PITCH, 1)
+    const phaseError = phaseDistance(gearTopPhase, rackPhase + .5)
+    const geometryValid = insideRack && gapError <= STRICT_SLOT_RACK_GAP_TOLERANCE
+    const phaseValid = phaseError <= STRICT_SLOT_PHASE_TOLERANCE
+    return {
+      ok: geometryValid && phaseValid,
+      valid: geometryValid && phaseValid,
+      geometryValid,
+      phaseValid,
+      gapError,
+      phaseError,
+      contact:{ x:target.x, y:pitchY }
+    }
+  }
+
+  function gearsOverlapForSlotBuild(a, b){
+    return dist(a, b) < visualCollisionRadius(a) + visualCollisionRadius(b) - 0.5
+  }
+
+  function contactLineBlockedByGear(anchor, loose, other){
+    if(!anchor || !loose || !other || other.id === anchor.id || other.id === loose.id) return false
+    const endpointClearance = Math.min(anchor.pitchRadius, loose.pitchRadius) * .45
+    const contactDistance = dist(anchor, loose)
+    const hit = distanceToSegment(other, anchor, loose)
+    const distanceFromAnchor = hit.t * contactDistance
+    const distanceFromLoose = (1 - hit.t) * contactDistance
+    if(distanceFromAnchor < endpointClearance || distanceFromLoose < endpointClearance) return false
+    return hit.distance < visualCollisionRadius(other) * .55 + CONTACT_LINE_PADDING
+  }
+
+  function debugLevel1SlotBuild(message, slot){
+    if(!DEBUG_SLOT_BUILD) return
+    console.log(`[level 1 slot build] ${message}`, slotDebugSummary(slot))
+  }
+
+  function debugLevel1SlotBuildReject(message, slot){
+    if(!DEBUG_SLOT_BUILD) return
+    console.log(`[level 1 slot build] afgewezen: ${message}`, {
+      ...slotDebugSummary(slot),
+      reason: slot?.reason || rejectedSlotReasons(slot).join(', ')
+    })
+  }
+
+  function slotDebugSummary(slot){
+    if(!slot) return null
+    return {
+      id: slot.id,
+      type: slot.type,
+      x: slot.x,
+      y: slot.y,
+      bluePhase: slot.bluePhase,
+      greenBlueOk: slot.greenBlueOk,
+      bluePinkOk: slot.bluePinkOk,
+      pinkRackOk: slot.pinkRackOk,
+      chainCanRotateOk: slot.chainCanRotateOk,
+      overallOk: slot.overallOk
+    }
+  }
+
+  function rejectedSlotReasons(slot){
+    if(!slot) return ['geen slot']
+    const reasons = []
+    if(slot.type === 'solution' && !slot.greenBlueOk) reasons.push('groen-blauw past niet exact')
+    if(slot.type === 'solution' && !slot.bluePinkOk) reasons.push('blauw-roze past niet exact')
+    if(slot.type === 'solution' && !slot.pinkRackOk) reasons.push('roze-tandheugel past niet exact')
+    if(slot.type === 'greenOnly' && !slot.greenBlueOk) reasons.push('groen-blauw past niet exact')
+    if(slot.type === 'pinkOnly' && !slot.bluePinkOk) reasons.push('blauw-roze past niet exact')
+    if(!slot.chainCanRotateOk && slot.type === 'solution') reasons.push('ketting kan niet draaien')
+    if(!slot.overallOk) reasons.push('overallOk is false')
+    return reasons
   }
 
   function makeGear(id, x, y, teeth, color, opts = {}){
@@ -698,6 +922,7 @@
 
   function closestLevel1Slot(gear){
     return LEVEL_1_SLOTS
+      .filter(slot => slot.overallOk === true)
       .map(slot => ({ slot, distance:Math.hypot(gear.x - slot.x, gear.y - slot.y) }))
       .filter(candidate => candidate.distance <= LEVEL_1_SLOT_SNAP_TOLERANCE)
       .sort((a, b) => a.distance - b.distance)[0]?.slot || null
@@ -797,7 +1022,7 @@
       details.bluePink = strictGearContactState(blue, pink, requiredContactGearIds)
       required.push(details.bluePink.ok)
     }
-    if(slot.result === 'success'){
+    if(slot.type === 'solution'){
       details.pinkRack = strictRackContactState(pink)
       required.push(details.pinkRack.ok)
     }
@@ -1484,7 +1709,7 @@
   function drawLevel1Slots(){
     if(mode !== 'solve') return
     const blueTemplate = gears.find(g => isLevel1BlueGear(g)) || makeGear('slot-template', 0, 0, 12, '#4fb5e8')
-    LEVEL_1_SLOTS.forEach(slot => {
+    LEVEL_1_SLOTS.filter(slot => slot.overallOk === true).forEach(slot => {
       const occupied = gears.some(g => g.lockedSlotId === slot.id)
       const slotGear = { ...blueTemplate, x:0, y:0, angle:slot.bluePhase ?? slot.phase, stock:false, pulse:0 }
       const path = buildGearPath(slotGear)
