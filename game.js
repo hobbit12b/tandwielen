@@ -47,9 +47,7 @@
     add: { x: 1118, y: 142, size: 78 },
     trash: { x: 1118, y: 590, size: 92 }
   }
-  const LEVEL_1_GREEN_PHASE = -0.0959964650095051
-  const LEVEL_1_BLUE_PHASE = -0.2243994752564138
-  const LEVEL_1_TARGET_PHASE = 0.037399912542735336
+  const LEVEL_1_PINK_X = 650
 
   const LEVEL_1_DOOR = {
     panelClosedX: 792,
@@ -68,12 +66,13 @@
     frameOverlay: { x: 748, y: 88, w: 292, h: 492, openingX: 806, openingY: 138, openingW: 202, openingH: 430 }
   }
 
+  const LEVEL_1_SOLUTION_CHAIN = buildLevel1SolutionChain()
   const LEVEL_1_SLOTS = buildLevel1Slots()
 
   const SOLVE_LEVEL_1 = {
     name: 'Deur',
     machine: 'door',
-    target: { x: 650, teeth: 12, angle: LEVEL_1_TARGET_PHASE },
+    target: { x: LEVEL_1_SOLUTION_CHAIN.pink.x, teeth: 12, angle: LEVEL_1_SOLUTION_CHAIN.pink.angle },
     stock: [
       { teeth: 12, color: '#4fb5e8', accent: '#d9f5ff' }
     ]
@@ -152,13 +151,62 @@
   }
 
   function buildLevel1SlotBaseGears(){
-    const targetRadii = gearRadii(12)
-    const targetY = rackPitchLineY() + targetRadii.pitchRadius
     return {
-      green: buildLevel1Gear('start', 470, 410, 18, LEVEL_1_GREEN_PHASE, { fixed:true, driver:true }),
-      pink: buildLevel1Gear('target', 650, targetY, 12, LEVEL_1_TARGET_PHASE, { fixed:true, target:true }),
-      blue: buildLevel1Gear('blue-slot', 0, 0, 12, LEVEL_1_BLUE_PHASE)
+      green: { ...LEVEL_1_SOLUTION_CHAIN.green },
+      pink: { ...LEVEL_1_SOLUTION_CHAIN.pink },
+      blue: { ...LEVEL_1_SOLUTION_CHAIN.blue }
     }
+  }
+
+  function buildLevel1SolutionChain(){
+    const rack = buildLevel1RackReference()
+    const pink = buildLevel1PinkFromRack(rack)
+    const greenTemplate = buildLevel1Gear('start', 470, 410, 18, 0, { fixed:true, driver:true })
+    const blue = buildLevel1BlueFromPink(pink, greenTemplate)
+    const green = buildLevel1GreenFromBlue(blue, greenTemplate)
+    return { rack, pink, blue, green }
+  }
+
+  function buildLevel1RackReference(){
+    return {
+      x: LEVEL_1_DOOR.rackClosedX,
+      y: LEVEL_1_DOOR.rackY,
+      pitchY: rackPitchLineY(),
+      w: LEVEL_1_DOOR.rackW,
+      h: LEVEL_1_DOOR.rackH
+    }
+  }
+
+  function buildLevel1PinkFromRack(rack){
+    const pink = buildLevel1Gear('target', LEVEL_1_PINK_X, rack.pitchY + gearRadii(12).pitchRadius, 12, 0, { fixed:true, target:true })
+    alignGearToRackAtReference(pink, rack)
+    return pink
+  }
+
+  function buildLevel1BlueFromPink(pink, greenTemplate){
+    const blueTemplate = buildLevel1Gear('blue-slot', 0, 0, 12, 0)
+    const points = circleIntersections(pink, meshDistance(pink, blueTemplate), greenTemplate, meshDistance(greenTemplate, blueTemplate))
+    const point = points
+      .filter(candidate => candidate.y >= LEVEL_1_DOOR.rackY + LEVEL_1_DOOR.rackH + blueTemplate.outerRadius + 28)
+      .sort((a, b) => b.y - a.y)[0]
+    const blue = { ...blueTemplate, x: point?.x ?? pink.x - meshDistance(pink, blueTemplate), y: point?.y ?? pink.y + meshDistance(pink, blueTemplate) }
+    blue.angle = meshedGearAngleFor(pink, pink.angle, blue, blue.angle)
+    return blue
+  }
+
+  function buildLevel1GreenFromBlue(blue, greenTemplate){
+    const green = { ...greenTemplate }
+    green.angle = meshedGearAngleFor(blue, blue.angle, green, green.angle)
+    return green
+  }
+
+  function alignGearToRackAtReference(target, rack){
+    target.y = rack.pitchY + target.pitchRadius
+    const topAngle = -Math.PI / 2
+    const gearPitch = TWO_PI / target.teeth
+    const rackPhase = modulo((target.x - rack.x - RACK_TOOTH_PHASE) / TOOTH_PITCH, 1)
+    target.angle = nearestMultiple(topAngle - modulo(rackPhase + .5, 1) * gearPitch, gearPitch, target.angle)
+    target.rackBaseAngle = target.angle
   }
 
   function buildSlotFromBlueGear({ id, label, type, blue, green, pink, connectsGreen, connectsPink, result }){
@@ -182,31 +230,26 @@
 
   function buildLevel1SolutionSlot(){
     const { green, pink, blue } = buildLevel1SlotBaseGears()
-    const points = circleIntersections(green, meshDistance(green, blue), pink, meshDistance(pink, blue))
-    let best = null
-
-    points.forEach((point, index) => {
-      const candidateBlue = { ...blue, x: point.x, y: point.y }
-      candidateBlue.angle = meshedGearAngleFor(green, green.angle, candidateBlue, LEVEL_1_BLUE_PHASE)
-      const slot = buildSlotFromBlueGear({
-        id: 'solution',
-        label: 'oplossing',
-        type: 'solution',
-        blue: candidateBlue,
-        green,
-        pink,
-        connectsGreen: true,
-        connectsPink: true,
-        result: 'success'
-      })
-      debugLevel1SlotBuild('solution kandidaat berekend', slot)
-      if(slot.overallOk && (!best || point.y > best.y)) best = slot
-      else if(!slot.overallOk) debugLevel1SlotBuildReject(`solution kandidaat ${index + 1}`, slot)
+    const slot = buildSlotFromBlueGear({
+      id: 'solution',
+      label: 'oplossing',
+      type: 'solution',
+      blue,
+      green,
+      pink,
+      connectsGreen: true,
+      connectsPink: true,
+      result: 'success'
     })
 
-    if(best) debugLevel1SlotBuild('solution-slot geldig', best)
-    else debugLevel1SlotBuildReject('solution-slot', { reason:'geen volledig geldige groen-blauw-roze-tandheugel ketting' })
-    return best
+    if(validateSolutionChain({ green, blue, pink })){
+      slot.overallOk = true
+      debugLevel1SlotBuild('solution-slot geldig', slot)
+      return slot
+    }
+
+    debugLevel1SlotBuildReject('solution-slot', { ...slot, reason:'geen volledig geldige tandheugel-roze-blauw-groen ketting' })
+    return null
   }
 
   function buildLevel1ExtraSlot({ id, label, type, anchorName, desiredAngle, result }){
@@ -217,7 +260,7 @@
       x: anchor.x + Math.cos(desiredAngle) * meshDistance(anchor, blue),
       y: anchor.y + Math.sin(desiredAngle) * meshDistance(anchor, blue)
     }
-    blueGear.angle = meshedGearAngleFor(anchor, anchor.angle, blueGear, LEVEL_1_BLUE_PHASE)
+    blueGear.angle = meshedGearAngleFor(anchor, anchor.angle, blueGear, blue.angle)
 
     const slot = buildSlotFromBlueGear({
       id,
@@ -269,19 +312,18 @@
     const pink = gearsForSlot.pink
     const greenBlueBlockers = slot.type === 'greenOnly' ? [pink] : []
     const bluePinkBlockers = slot.type === 'pinkOnly' ? [green] : []
-    const greenBlue = strictGearContactStateForSlotBuild(green, blue, greenBlueBlockers)
-    const bluePink = strictGearContactStateForSlotBuild(blue, pink, bluePinkBlockers)
-    const pinkRack = strictRackContactStateForSlotBuild(pink)
-    const chainCanRotateOk = slot.type === 'solution'
-      ? greenBlue.ok && bluePink.ok && pinkRack.ok
-      : false
-    const doorCanOpenOk = slot.type === 'solution' ? chainCanRotateOk && pinkRack.ok : false
+    const pinkRack = validatePinkRackMesh(pink)
+    const bluePink = validateBluePinkMesh(blue, pink, bluePinkBlockers)
+    const greenBlue = validateGreenBlueMesh(green, blue, greenBlueBlockers)
+    const solutionChain = slot.type === 'solution' ? validateSolutionChain({ green, blue, pink }) : null
+    const chainCanRotateOk = solutionChain?.chainCanRotateOk === true
+    const doorCanOpenOk = solutionChain?.doorCanOpenOk === true
     const overallOk = slot.type === 'solution'
-      ? greenBlue.ok && bluePink.ok && pinkRack.ok && chainCanRotateOk && doorCanOpenOk
+      ? solutionChain?.ok === true
       : slot.type === 'greenOnly'
         ? greenBlue.ok
         : slot.type === 'pinkOnly'
-          ? bluePink.ok
+          ? bluePink.ok && pinkRack.ok
           : false
 
     return {
@@ -291,7 +333,7 @@
       chainCanRotateOk,
       doorCanOpenOk,
       overallOk,
-      validationDetails: { greenBlue, bluePink, pinkRack }
+      validationDetails: { greenBlue, bluePink, pinkRack, solutionChain }
     }
   }
 
@@ -300,6 +342,37 @@
     const validation = evaluateLevel1SlotMesh(slot)
     Object.assign(slot, validation)
     return slot.overallOk === true
+  }
+
+  function validatePinkRackMesh(pink){
+    return strictRackContactStateForSlotBuild(pink)
+  }
+
+  function validateBluePinkMesh(blue, pink, blockers = []){
+    return strictGearContactStateForSlotBuild(blue, pink, blockers)
+  }
+
+  function validateGreenBlueMesh(green, blue, blockers = []){
+    return strictGearContactStateForSlotBuild(green, blue, blockers)
+  }
+
+  function validateSolutionChain({ green, blue, pink }){
+    const pinkRack = validatePinkRackMesh(pink)
+    const bluePink = validateBluePinkMesh(blue, pink)
+    const greenBlue = validateGreenBlueMesh(green, blue)
+    const chainCanRotateOk = pinkRack.ok && bluePink.ok && greenBlue.ok
+    const rackCanMoveOk = chainCanRotateOk && !!pink?.target
+    const doorCanOpenOk = rackCanMoveOk && LEVEL_1_DOOR.travel > 0
+    return {
+      ok: chainCanRotateOk && rackCanMoveOk && doorCanOpenOk,
+      pinkRackOk: pinkRack.ok,
+      bluePinkOk: bluePink.ok,
+      greenBlueOk: greenBlue.ok,
+      chainCanRotateOk,
+      rackCanMoveOk,
+      doorCanOpenOk,
+      details: { pinkRack, bluePink, greenBlue }
+    }
   }
 
   function strictGearContactStateForSlotBuild(anchor, child, otherGears = []){
@@ -486,9 +559,10 @@
     solveSnapPauseUntil = 0
     nextBtn.hidden = true
     feedback.classList.remove('show')
-    const targetY = rackPitchLineY() + gearRadii(level.target.teeth).pitchRadius
-    const start = makeGear('start', 470, 410, 18, '#59c765', { fixed:true, driver:true, speed:-START_SPEED, accent:'#dff6a8', angle:LEVEL_1_GREEN_PHASE })
-    const target = makeGear('target', level.target.x, targetY, level.target.teeth, '#ec6fae', { fixed:true, target:true, accent:'#ffd8eb', angle: LEVEL_1_TARGET_PHASE })
+    const solvedGreen = LEVEL_1_SOLUTION_CHAIN.green
+    const solvedPink = LEVEL_1_SOLUTION_CHAIN.pink
+    const start = makeGear('start', solvedGreen.x, solvedGreen.y, solvedGreen.teeth, '#59c765', { fixed:true, driver:true, speed:-START_SPEED, accent:'#dff6a8', angle:solvedGreen.angle })
+    const target = makeGear('target', solvedPink.x, solvedPink.y, solvedPink.teeth, '#ec6fae', { fixed:true, target:true, accent:'#ffd8eb', angle: solvedPink.angle })
     gears = [start, target]
     target.rackBaseAngle = target.angle
     links = []
@@ -1396,9 +1470,10 @@
   function isSolveChainComplete(){
     const target = getGear('target')
     if(!target || !isTargetGearPowered()) return false
+    const green = getGear('start')
     const blue = gears.find(g => isLevel1BlueGear(g))
-    const rackState = rackMeshState(target)
-    return !!blue?.lockedToAxle && rackState.valid && drivenGearIds().has(target.id)
+    if(!blue?.lockedToAxle || !drivenGearIds().has(target.id)) return false
+    return validateSolutionChain({ green, blue, pink: target }).ok === true
   }
 
   function checkSolveState(){
